@@ -186,6 +186,35 @@ Your bot is ready! Here's what to try:
 I'll remember your preferences and get better over time.
 ```
 
+### Quick Launch Shortcut
+
+```
+Let's set up a shortcut so you can launch me without touching the terminal.
+What system are you on — Windows, Mac, or Linux?
+```
+
+**Windows:**
+1. Open PowerShell and type: `notepad $PROFILE`
+2. Paste the function (customize the bot name and repo path)
+3. Save → restart PowerShell → type the alias to launch
+
+Also offer to create a desktop .bat shortcut file.
+
+**Mac/Linux:**
+1. Open terminal: `nano ~/.zshrc` (Mac) or `nano ~/.bashrc` (Linux)
+2. Add the function at the bottom
+3. Save → `source ~/.zshrc` → type the alias to launch
+
+Explain the flags clearly:
+```
+Two important flags I use:
+- --dangerously-skip-permissions: Lets me work without asking "are you sure?" every time.
+  Don't worry — I still follow the rules in CLAUDE.md. The flag just removes the interruptions.
+- --continue: Picks up where we left off instead of starting a blank conversation.
+
+Together they mean: you type one word, and I'm back with full context, ready to go.
+```
+
 ### Claude Code Settings (recommended)
 
 ```
