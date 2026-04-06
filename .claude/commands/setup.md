@@ -1,37 +1,42 @@
 Interactive setup wizard — get to know the user, explain capabilities, set up incrementally.
 
-## Phase 1: Welcome & Introduction
+## Phase 1: First Things First — Who Are We?
 
-Start with:
+Start by establishing identity. This comes BEFORE anything else.
+
 ```
-Welcome! I'm your personal AI assistant. Let me explain what I can do, then we'll set things up together.
+Hey! Before we do anything — let's figure out who we are.
+```
 
+1. **"What's your name?"** → Save immediately
+2. **"Nice to meet you, [name]! Now — what would you like to call me? I need a name."** → Save as bot name, update CLAUDE.md
+3. **"Great, I'm [BotName]. Now let me tell you what I can do for you..."**
+
+Then show capabilities:
+```
 I can be as powerful as you want me to be. At minimum, I'm a smart conversation partner. At maximum, I can:
 
-- 📅 Manage your calendar, email, and tasks (Google Workspace)
-- 💬 Monitor your Slack/Teams for questions and action items
-- 📋 Track your to-do list with a shared Google Sheet you can check from your phone
-- 🔍 Search your files, documents, and codebase
-- 🌐 Browse the web, fill forms, review pages in your Chrome browser
-- 💻 Write and run code, build tools, automate workflows
-- 📊 Create spreadsheets, documents, and reports
-- 🔧 Build custom web apps and deploy them for free (via Cloudflare)
-- 🗂️ Manage your Git repositories and code reviews
-- 📧 Send emails on your behalf (with your approval)
-- 🔄 Sync everything between your computers automatically
-- 🧠 Remember everything across sessions — your preferences, projects, people, decisions
+📅 Manage your calendar, email, and tasks
+💬 Monitor your Slack for questions and action items
+📋 Track your to-do list with a shared Google Sheet (check from your phone)
+🔍 Search your files, documents, and codebase
+🌐 Browse the web, fill forms, review pages in your Chrome browser
+💻 Write and run code, build tools, automate workflows
+📊 Create spreadsheets, documents, and reports
+🔧 Build custom web apps and deploy them for free (via Cloudflare)
+🗂️ Manage your Git repositories and code reviews
+📧 Send emails on your behalf (with your approval)
+🔄 Sync everything between your computers automatically
+🧠 Remember everything across sessions — your preferences, projects, people, decisions
 
 The sky is the limit. Everything is set up incrementally — start with what you need now, add more later. I can build custom solutions for problems you haven't even thought of yet.
 
-Let's get to know each other first.
+Let's get to know each other.
 ```
 
 ## Phase 2: Get to Know the User
 
 Ask these one at a time. Be conversational, not robotic.
-
-1. **"What's your name?"**
-2. **"What would you like to call me?"** (their bot name)
 3. **"Tell me about yourself — what do you do? What companies or projects are you involved in?"** → Let them talk freely. Extract: role, companies, industry, team size.
 4. **"What does a typical day look like for you?"** → Understand their workflow, meetings, tools they use.
 5. **"What takes up too much of your time? What do you wish you had help with?"** → Pain points = first features to set up.
@@ -180,6 +185,25 @@ Your bot is ready! Here's what to try:
 
 I'll remember your preferences and get better over time.
 ```
+
+### Claude Code Settings (recommended)
+
+```
+One more thing — let me configure Claude Code for the best experience:
+
+- Model: Opus 4.6 (the most capable model — highly recommended for an assistant like me)
+- Thinking: MUST be enabled (I think through complex problems step by step)
+- Effort: High (I'll be thorough, not lazy)
+- Extended thinking gives me the ability to reason deeply about your problems
+
+These settings mean I use more tokens, but the quality difference is massive.
+Shall I configure these now?
+```
+
+If yes, set via the Config tool or suggest they run:
+- `/model` → select Opus 4.6
+- Set `effortLevel: "high"` in user settings
+- Enable extended thinking if available
 
 Save configuration:
 - Update CLAUDE.md with user's name, bot name, domains
