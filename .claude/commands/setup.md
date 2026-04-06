@@ -123,15 +123,16 @@ Configure `SYNC_DRIVE_PATH` in `.env` based on their choice. For USB: set to the
 Only set up what they chose. For each integration:
 
 ### Google Workspace (Calendar, Gmail, Tasks, Drive, Sheets)
-Walk through step by step:
-1. "Open https://console.cloud.google.com/ in your browser"
-2. "Create a new project — call it whatever you like, e.g., 'My Bot'"
-3. "Go to APIs & Services → Library → Enable these APIs: Calendar, Gmail, Tasks, Sheets, Drive"
-4. "Go to APIs & Services → Credentials → Create OAuth 2.0 Client ID → Desktop app"
-5. "Download the JSON file → save it as `credentials.json` in this folder"
-6. "Now I'll trigger the auth flow — a browser window will open, sign in with your Google account"
-7. Run: `python tools/google_workspace.py calendar-today`
-8. "Did it show your calendar? Great, Google is set up!"
+Do as much as possible FOR the user. Use browser automation (claude-in-chrome MCP) if available:
+
+1. Open Chrome to https://console.cloud.google.com/ — navigate for them if browser tools work
+2. If no browser tools: give them the EXACT URL to click, one step at a time, wait for confirmation
+3. Once they download `credentials.json`: detect where it landed (likely Downloads folder), move it to the project root automatically
+4. Trigger the OAuth flow automatically: `python tools/google_workspace.py calendar-today`
+5. Tell them to click "Allow" in the browser popup — that's the ONLY manual step
+6. Verify it worked, report results
+
+The user should click a few links and press "Allow" — everything else is automated.
 
 ### GitHub
 1. "Create an account at github.com if you don't have one"
@@ -189,30 +190,30 @@ I'll remember your preferences and get better over time.
 ### Quick Launch Shortcut
 
 ```
-Let's set up a shortcut so you can launch me without touching the terminal.
-What system are you on — Windows, Mac, or Linux?
+Let me set up a shortcut so you never have to touch the command line again.
+Just tell me your bot name and I'll create everything.
 ```
 
-**Windows:**
-1. Open PowerShell and type: `notepad $PROFILE`
-2. Paste the function (customize the bot name and repo path)
-3. Save → restart PowerShell → type the alias to launch
+Ask: **"What alias do you want to type to launch me? (e.g., 'mybot', 'jarvis', 'mb')"**
 
-Also offer to create a desktop .bat shortcut file.
+Then **DO IT AUTOMATICALLY** — the user should never have to edit files manually:
 
-**Mac/Linux:**
-1. Open terminal: `nano ~/.zshrc` (Mac) or `nano ~/.bashrc` (Linux)
-2. Add the function at the bottom
-3. Save → `source ~/.zshrc` → type the alias to launch
+**Windows:** Write the PowerShell profile directly using Bash/Write tools:
+- Detect profile path via: `powershell -Command "echo $PROFILE"`
+- Create parent dir if needed
+- Write the function + alias to the profile file
+- Also create a desktop .bat file at `~/Desktop/[BotName].bat`
+- Tell the user: "Done! Just type '[alias]' in any PowerShell window, or double-click [BotName] on your desktop."
 
-Explain the flags clearly:
+**Mac/Linux:** Write to shell config directly:
+- Detect shell: `echo $SHELL`
+- Append function to `~/.zshrc` or `~/.bashrc`
+- Tell the user: "Done! Open a new terminal and type '[alias]'."
+
+Explain briefly:
 ```
-Two important flags I use:
-- --dangerously-skip-permissions: Lets me work without asking "are you sure?" every time.
-  Don't worry — I still follow the rules in CLAUDE.md. The flag just removes the interruptions.
-- --continue: Picks up where we left off instead of starting a blank conversation.
-
-Together they mean: you type one word, and I'm back with full context, ready to go.
+I've set it up so you just type one word and I'm back with full context.
+No command line knowledge needed — ever.
 ```
 
 ### Claude Code Settings (recommended)
