@@ -1,97 +1,190 @@
-Interactive setup wizard with compliance-aware questionnaire.
+Interactive setup wizard — get to know the user, explain capabilities, set up incrementally.
 
-## Phase 1: Get to know the user
+## Phase 1: Welcome & Introduction
 
-Ask these questions one at a time, wait for answers:
+Start with:
+```
+Welcome! I'm your personal AI assistant. Let me explain what I can do, then we'll set things up together.
 
-1. **"What's your name?"** → Save to CLAUDE.md as [USER]
-2. **"What would you like to call your bot?"** → Save as [BotName]
-3. **"What's your role? (e.g., CEO, CTO, Product Manager, Freelancer)"** → Determines what access levels are appropriate
-4. **"What company/companies do you work with?"** → Add to CLAUDE.md domains
-5. **"What's your primary email?"** → Used for calendar, email scanning
-6. **"Do you manage other people's data? (employees, customers, etc.)"** → Compliance flag
+I can be as powerful as you want me to be. At minimum, I'm a smart conversation partner. At maximum, I can:
 
-## Phase 2: Compliance assessment
+- 📅 Manage your calendar, email, and tasks (Google Workspace)
+- 💬 Monitor your Slack/Teams for questions and action items
+- 📋 Track your to-do list with a shared Google Sheet you can check from your phone
+- 🔍 Search your files, documents, and codebase
+- 🌐 Browse the web, fill forms, review pages in your Chrome browser
+- 💻 Write and run code, build tools, automate workflows
+- 📊 Create spreadsheets, documents, and reports
+- 🔧 Build custom web apps and deploy them for free (via Cloudflare)
+- 🗂️ Manage your Git repositories and code reviews
+- 📧 Send emails on your behalf (with your approval)
+- 🔄 Sync everything between your computers automatically
+- 🧠 Remember everything across sessions — your preferences, projects, people, decisions
 
-Based on role and data management answers, assess:
+The sky is the limit. Everything is set up incrementally — start with what you need now, add more later. I can build custom solutions for problems you haven't even thought of yet.
 
-- **If they manage customer data**: Warn about GDPR/privacy implications of AI accessing emails/CRM with customer PII. Recommend: only scan subject lines, never forward customer data, don't store PII in context/memory.
-- **If they manage employee data**: Warn about employment law — AI reading employee emails/Slack may require disclosure. Recommend: only scan channels they own/admin, not private DMs of employees.
-- **If they're in a regulated industry** (finance, healthcare, legal): Extra caution — suggest they check with compliance/legal before enabling email and Slack scanning.
-- **If they explicitly acknowledge and accept**: Proceed with full setup. Log their acceptance.
+Let's get to know each other first.
+```
 
-Ask: **"Based on your role, here are the data access implications. Do you want to proceed with full access, limited access, or skip certain integrations?"**
+## Phase 2: Get to Know the User
 
-Options:
-- **Full**: Calendar + Email + Tasks + Slack + Drive + Sheets (all read-write)
-- **Limited**: Calendar + Tasks + Sheets only (no email/Slack scanning)
-- **Custom**: Let them pick which integrations to enable
+Ask these one at a time. Be conversational, not robotic.
 
-## Phase 3: Technical setup (based on chosen access level)
+1. **"What's your name?"**
+2. **"What would you like to call me?"** (their bot name)
+3. **"Tell me about yourself — what do you do? What companies or projects are you involved in?"** → Let them talk freely. Extract: role, companies, industry, team size.
+4. **"What does a typical day look like for you?"** → Understand their workflow, meetings, tools they use.
+5. **"What takes up too much of your time? What do you wish you had help with?"** → Pain points = first features to set up.
+6. **"Do you work from multiple computers?"** → Determines sync setup priority.
+7. **"Do you manage other people? Customers? Sensitive data?"** → Compliance assessment.
 
-For each enabled integration, guide step-by-step:
+## Phase 3: Compliance & Data Access Assessment
+
+Based on their answers, explain clearly:
+
+**If they manage customer data (PII):**
+```
+Since you handle customer data, there are some things to consider:
+- I can scan your email subjects and calendar, but I should avoid reading customer PII unless you explicitly ask
+- If I access your CRM or customer database, that data enters my context — make sure your privacy policy allows AI assistants
+- I recommend: start with calendar + tasks only, add email scanning after you're comfortable
+- GDPR note: if you're in the EU, check if your DPA covers AI assistant access
+
+Do you want full access, limited access, or want to discuss further?
+```
+
+**If they manage employees:**
+```
+Since you manage a team, a note on workplace data:
+- I can read Slack channels you're a member of — but reading employees' private DMs may require disclosure under employment law in some jurisdictions
+- I recommend: scan channels you own/admin, skip private DMs unless explicitly needed
+- You may want to let your team know you use an AI assistant for Slack scanning
+
+Comfortable proceeding?
+```
+
+**If regulated industry (finance, healthcare, legal):**
+```
+Your industry has specific regulations around data handling. I recommend checking with your compliance/legal team before enabling email and Slack scanning. Calendar + tasks are generally safe to start with.
+```
+
+**For everyone:** Ask them to explicitly confirm their chosen access level. Save to `context/compliance.md`.
+
+## Phase 4: Recommended Services & Accounts
+
+Explain each service and why it's useful. Don't pressure — let them choose.
+
+### Required
+- **Google Account** — Calendar, email, tasks, file storage. You probably already have one.
+  - Need: Google Cloud project with OAuth credentials (I'll walk you through it)
+
+### Highly Recommended
+- **GitHub Account** (free) — This is where your bot's code and configuration live. It means:
+  - Your setup is version-controlled (can undo any change)
+  - You can clone it to any new computer instantly
+  - If something breaks, we can roll back
+  - You can share your setup with friends/family
+  - Sign up: github.com → free account is fine
+
+- **Google Drive for Desktop** — Syncs your secrets and settings between computers automatically. No manual USB copying needed.
+
+### Optional (add anytime)
+- **Slack** — I can monitor your workspace, summarize channels, flag questions directed at you
+- **GitLab** — If your code lives on GitLab instead of GitHub
+- **Cloudflare** (free) — I can build and deploy custom web apps for you:
+  - Task dashboards, internal tools, simple websites
+  - Free hosting, free database, free file storage
+  - Example: a shared task board web app, a personal wiki, a Kindle library manager
+  - Sign up: dash.cloudflare.com → free plan is generous
+- **Resend** (free tier) — I can send emails as your bot (notifications, reports, alerts)
+- **Figma** — I can read your designs and help implement them in code
+
+### Sync Between Computers
+```
+You mentioned you work from multiple machines. I can keep everything in sync:
+
+Option 1: Google Drive (recommended) — automatic, always up to date
+Option 2: USB stick — manual but works offline/without cloud
+Option 3: Any cloud storage (Dropbox, OneDrive, etc.) — just point me to the folder
+Option 4: Git-based — everything syncs through your GitHub repo
+
+Which works best for you?
+```
+
+Configure `SYNC_DRIVE_PATH` in `.env` based on their choice. For USB: set to the USB mount path.
+
+## Phase 5: Technical Setup (guided, one at a time)
+
+Only set up what they chose. For each integration:
 
 ### Google Workspace (Calendar, Gmail, Tasks, Drive, Sheets)
-1. Go to https://console.cloud.google.com/
-2. Create a project (or use existing)
-3. Enable APIs: Calendar, Gmail, Tasks, Sheets, Drive
-4. Create OAuth 2.0 credentials (Desktop app type)
-5. Download `credentials.json` to this project root
-6. Run: `python tools/google_workspace.py calendar-today` → triggers OAuth flow
-7. Authorize in browser → `token.json` is created
-8. Test: `bash tools/calendar.sh today`
+Walk through step by step:
+1. "Open https://console.cloud.google.com/ in your browser"
+2. "Create a new project — call it whatever you like, e.g., 'My Bot'"
+3. "Go to APIs & Services → Library → Enable these APIs: Calendar, Gmail, Tasks, Sheets, Drive"
+4. "Go to APIs & Services → Credentials → Create OAuth 2.0 Client ID → Desktop app"
+5. "Download the JSON file → save it as `credentials.json` in this folder"
+6. "Now I'll trigger the auth flow — a browser window will open, sign in with your Google account"
+7. Run: `python tools/google_workspace.py calendar-today`
+8. "Did it show your calendar? Great, Google is set up!"
+
+### GitHub
+1. "Create an account at github.com if you don't have one"
+2. "I'll create a private repo for your bot: `git init && git remote add origin ...`"
+3. "This means your setup is backed up and can be cloned anywhere"
 
 ### Slack
-1. Go to https://api.slack.com/apps → Create New App → From scratch
-2. Name it "[BotName]", select your workspace
-3. OAuth & Permissions → User Token Scopes → Add:
-   - channels:history, channels:read, groups:history, groups:read
-   - im:history, im:read, mpim:history, mpim:read
-   - users:read, search:read
-4. Install to workspace → Copy User OAuth Token (xoxp-...)
-5. Add to .env: `SLACK_USER_TOKEN=xoxp-...`
+1. "Go to api.slack.com/apps → Create New App → From scratch"
+2. "Name it '[BotName]', select your workspace"
+3. "Go to OAuth & Permissions → User Token Scopes → add: channels:history, channels:read, groups:history, groups:read, im:history, im:read, users:read, search:read"
+4. "Install to workspace → copy the token that starts with xoxp-"
+5. "I'll add it to your .env file"
 6. Test: `bash tools/slack.sh channels`
 
-### GitLab (optional)
-1. Go to https://gitlab.com/-/user_settings/personal_access_tokens
-2. Create token with scopes: api, read_user, read_repository
-3. Add to .env: `GITLAB_PERSONAL_ACCESS_TOKEN=glpat-...`
+### Cloudflare (if chosen)
+1. "Create a free account at dash.cloudflare.com"
+2. "Go to My Profile → API Tokens → View Global API Key"
+3. "I'll save it — now I can build and deploy web apps for you"
 
-### Resend / Email sending (optional)
-1. Go to https://resend.com → Create account → Get API key
-2. Add domain verification
-3. Add to .env: `RESEND_API_KEY=re_...`
+### Sync Setup
+Based on their choice:
+- **Google Drive**: Set `SYNC_DRIVE_PATH` in .env, create backup folder, test push/pull
+- **USB**: Set `SYNC_DRIVE_PATH` to USB mount point (e.g., `/d/bot-backup/`)
+- **Other cloud**: Same pattern, just different path
 
-### Google Drive sync (multi-machine)
-1. Install Google Drive for Desktop
-2. Create backup folder: `G:/My Drive/Backup/[botname]-secrets/`
-3. Run: `bash tools/sync_settings.sh push`
+### Task Board
+1. "I'll create a Google Sheet as your task board"
+2. "It has checkboxes, priorities, and I'll keep it updated automatically"
+3. "You can check it from your phone anytime"
+4. Save Sheet ID to CLAUDE.md
 
-## Phase 4: Task Board setup
+## Phase 6: Verify & Save
 
-1. Create a new Google Sheet
-2. Name it: "[BotName] — Task Board"
-3. Add headers in row 1: Done | Priority | Source | Who | Task | Due | Notes | Added
-4. Copy the Sheet ID from the URL
-5. Update CLAUDE.md with the Sheet ID
-6. Test: `bash tools/sheets.sh read "SHEET_ID" "Tasks!A:H"`
+Run each enabled integration and report:
+```
+Setup Complete! Here's what's working:
 
-## Phase 5: Verify everything
+✅ Google Calendar — connected
+✅ Gmail — connected
+✅ Google Tasks — connected
+✅ Slack — connected (12 channels, 8 DMs)
+✅ GitHub — repo created at github.com/[user]/[botname]
+✅ Google Drive sync — backup folder ready
+⬜ Cloudflare — not configured (add anytime with /setup)
+⬜ Resend — not configured
 
-Run each enabled integration and report status:
-- [ ] Calendar: `bash tools/calendar.sh today`
-- [ ] Gmail: `bash tools/gmail.sh unread`
-- [ ] Tasks: `bash tools/gtasks.sh list`
-- [ ] Slack: `bash tools/slack.sh channels`
-- [ ] Sheets: read task board
-- [ ] Drive: `bash tools/drive.sh recent`
+Your bot is ready! Here's what to try:
+- /morning — get your daily briefing
+- /eod — wrap up your day
+- Just ask me anything — I learn as we go
 
-Report: what works, what's missing, next steps.
+I'll remember your preferences and get better over time.
+```
 
-## Phase 6: Save configuration
-
-- Update CLAUDE.md with user's details
+Save configuration:
+- Update CLAUDE.md with user's name, bot name, domains
+- Create `context/me.md` with profile
 - Save compliance choice to `context/compliance.md`
-- Create `context/me.md` with user profile
-- Run `bash tools/sync_settings.sh push` to backup
 - Commit: "feat: initial setup complete for [USER]"
+- Push to GitHub if configured
+- Push to sync location if configured
