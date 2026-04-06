@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # SessionStart hook: inject last session summary + git context
-cd "$(dirname "$0")/../.." || exit 0
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$PROJECT_DIR" || exit 0
 
 # Invalidate statusline cost cache
 rm -f "$HOME/.claude/api_cost_cache.json" 2>/dev/null
+
+# Auto-sync: pull latest settings from Google Drive on session start
+if [ -n "${SYNC_DRIVE_PATH:-}" ] && [ -d "${SYNC_DRIVE_PATH}" ]; then
+  bash "$PROJECT_DIR/tools/sync_settings.sh" pull 2>/dev/null || true
+fi
 
 SESSION_LOG="context/session-log.md"
 LAST_SESSION=""

@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-PYTHON="/c/Users/xndr/AppData/Local/Programs/Python/Python313/python.exe"
+PYTHON="${PYTHON:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)}"
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/google_workspace.py"
 export PYTHONIOENCODING=utf-8
 

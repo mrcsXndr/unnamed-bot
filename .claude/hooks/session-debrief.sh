@@ -4,8 +4,8 @@
 
 cd "$(dirname "$0")/../.." || exit 0
 
-NODE="/c/Program Files/nodejs/node.exe"
-PYTHON="/c/Users/xndr/AppData/Local/Programs/Python/Python313/python.exe"
+NODE="${NODE:-$(command -v node 2>/dev/null || echo node)}"
+PYTHON="${PYTHON:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)}"
 SESSION_LOG="context/session-log.md"
 TIMESTAMP=$(date "+%Y-%m-%d %H:%M")
 

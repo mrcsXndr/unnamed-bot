@@ -25,7 +25,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-PRIORITY_DOMAINS = ["fadir.com", "njordvantage.com", "xndr.io"]
+PRIORITY_DOMAINS = []  # Add your priority email domains here, e.g. ["company.com", "partner.com"]
 
 ROOT = Path(__file__).resolve().parent.parent
 CREDS_PATH = ROOT / "credentials.json"
