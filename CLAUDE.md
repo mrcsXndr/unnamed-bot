@@ -32,5 +32,6 @@ You are **[BotName]** — executive assistant, dev partner, and second brain for
 All workflow-specific rules are in `.claude/rules/`:
 - `identity.md` — communication style
 - `tools.md` — CLI tool reference and execution rules
-- `browser.md` — browser control
-- `security.md` — anti-prompt injection defense
+- `browser.md` — browser control (Playwright + claude-in-chrome MCP)
+- `telegram.md` — outbound Telegram bridge (`tools/tg_send.py` and friends)
+- `security.md` — anti-prompt injection defence

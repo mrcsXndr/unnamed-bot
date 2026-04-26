@@ -1,4 +1,4 @@
-// GooseBot statusline — model, git, context %, lifetime API cost
+// the bot statusline — model, git, context %, lifetime API cost
 const fs = require('fs');
 const path = require('path');
 const os = require('os');

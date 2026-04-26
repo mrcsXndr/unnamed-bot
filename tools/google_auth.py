@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Google OAuth2 authentication helper for GooseBot.
+"""Google OAuth2 authentication helper for the bot.
 Handles the OAuth flow and stores credentials for gws CLI and Python API access.
 """
 import json
