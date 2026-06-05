@@ -2,7 +2,7 @@
 """
 tg_send_photo.py — send a photo to Telegram via the Bot API.
 
-Stdlib only. Reads TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from goose-bot/.env.
+Stdlib only. Reads TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from the project .env.
 
 Usage:
     python tools/tg_send_photo.py <photo_path> [caption]

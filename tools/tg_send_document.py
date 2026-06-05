@@ -2,7 +2,7 @@
 """
 tg_send_document.py — send a document/file to Telegram via the Bot API.
 
-Stdlib only. Reads TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from goose-bot/.env.
+Stdlib only. Reads TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from the project .env.
 
 Usage:
     python tools/tg_send_document.py <file_path> [caption]

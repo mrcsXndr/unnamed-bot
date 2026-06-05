@@ -9,7 +9,7 @@ formatting matters.
 Usage:
     python tools/tg_send.py "**Hi** with `code`"
     echo "long text" | python tools/tg_send.py
-    python tools/tg_send.py --chat-id 7989209848 --reply-to 540 "text"
+    python tools/tg_send.py --chat-id 123456789 --reply-to 540 "text"
     python tools/tg_send.py --plain "raw text, no formatting"
 
 Behavior:

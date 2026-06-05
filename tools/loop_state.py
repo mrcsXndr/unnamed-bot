@@ -8,8 +8,8 @@ without doing anything (near-zero token cost). On real-work ticks, calls
 `loop_state.py work` to reset the no-op counter. On no-op ticks, calls
 `loop_state.py noop` — after 5 consecutive no-ops, auto-pauses with reason.
 
-State file: goose-bot/.autoloop_state.json
-Sentinel file: goose-bot/.autoloop_paused (presence = paused, content = reason)
+State file: <repo>/.autoloop_state.json
+Sentinel file: <repo>/.autoloop_paused (presence = paused, content = reason)
 
 Usage:
     python tools/loop_state.py check                  # exit 0 = run tick, 1 = skip

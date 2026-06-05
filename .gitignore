@@ -1,8 +1,26 @@
 .env
+.dev.vars
 credentials.json
 token.json
 .credentials/
+*-svctoken*
 node_modules/
 logs/
 *.log
 .DS_Store
+
+# Generated runtime state (not meant for git)
+.context_state.json
+.context_warn_tg_lock
+MEMORY_SYNC_CONFLICT.md
+screenshots/*
+!screenshots/.gitkeep
+tools/__pycache__/
+__pycache__/
+*.pyc
+
+# Done-sound binaries (optional, user-supplied)
+.claude/hooks/sounds/done.*
+
+# NOTE: memory/ is intentionally tracked so it syncs across machines.
+# Keep secrets OUT of memory/.

@@ -24,6 +24,19 @@
 | `tools/drive.sh` | Google Drive (search/recent/download/list) | google_workspace.py |
 | `tools/slack.sh` | Slack (channels/dms/history/search/unread) | Slack API (xoxp token) |
 | `tools/sync_settings.sh` | Sync secrets/settings between machines via Google Drive | standalone |
+| `tools/browser.py` | Drive your authenticated Chrome via Playwright CDP (goto/click/type/text/screenshot/cookies) | standalone |
+| `tools/cloudflare_ops.py` | Cloudflare DNS/SSL/cache management | standalone |
+| `tools/tg_send.py` | Send Telegram messages (auto MarkdownV2 + 4000-char split) | Telegram Bot API |
+| `tools/transcribe.py` | Voice-to-text (Groq Whisper) for Telegram voice notes | Groq API |
+| `tools/sanitize.py` | Anti-prompt-injection sanitiser for all external content | standalone |
+| `tools/session_summarize.py` | Snapshot recent repo activity to `memory/sessions/` (compaction recovery) | standalone |
+| `tools/state_track.py` | Per-project state file (in-flight tasks, blockers, decisions) | standalone |
+
+## Hooks & framework (wired in `.claude/settings.json`)
+- `tools/memory-sync-hook.cjs` — pulls/pushes `memory/` to your git remote on session start/stop (cross-machine memory). Never force-pushes; flags conflicts.
+- `tools/context_warn_hook.cjs` — `UserPromptSubmit` hook; warns when the context window is filling, optional Telegram alert when critical.
+- `tools/statusline.js` — custom status bar (model, git, context %, lifetime API cost).
+- `tools/session_summarize.py` runs on `PreCompact` and `Stop` so context survives compaction.
 
 ## Direct Python usage
 For complex operations, call `google_workspace.py` directly:

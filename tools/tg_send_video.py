@@ -2,7 +2,7 @@
 """
 tg_send_video.py — send a video to Telegram via the Bot API sendVideo endpoint.
 
-Stdlib only. Reads TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from goose-bot/.env.
+Stdlib only. Reads TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID from the project .env.
 Sends as inline-playable video (not as a document).
 
 Usage:
