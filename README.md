@@ -114,42 +114,53 @@ Then in the Claude Code prompt:
 
 The bot walks you through everything — who you are, which services to connect, where to sync. ~30 minutes for a full setup; you can also do it in pieces.
 
-### One-line launcher (Windows)
+### One-command launcher
 
-Add to your PowerShell profile (`$PROFILE`):
+The repo ships ready-made launchers — `scripts/launch.ps1` (Windows) and
+`scripts/launch.sh` (macOS / Linux). Each one:
+
+- clones the repo from the public URL if it's missing,
+- pulls your latest settings from `SYNC_DRIVE_PATH` if you set it (see
+  [Multi-machine sync](#multi-machine-sync)),
+- prompts **[1] Continue last session** or **[2] Start fresh session**, and
+- launches Claude Code with the **Telegram channel plugin auto-activated**
+  (`--channels plugin:telegram@claude-plugins-official`) so inbound Telegram
+  messages reach the bot. See the
+  [Telegram "Receiving (optional)"](#telegram-send--optional-receive) section
+  and `.claude/rules/telegram.md`. (If you don't use Telegram, the launcher
+  no-ops the Telegram bits and starts the bot anyway.)
+
+The Windows launcher additionally patches the Telegram plugin for two
+Windows-only gotchas (an absolute `bun.exe` path so the plugin's MCP process
+starts, and an LF-only state `.env` so `bun` doesn't read a stray `\r` into the
+token). Both are explained in comments inside `scripts/launch.ps1`.
+
+#### Windows
+
+Run it directly, or add a tiny `mybot` function to your PowerShell profile
+(`$PROFILE`) that calls the committed script:
 
 ```powershell
 function mybot {
-    $repo = "C:\Users\$env:USERNAME\Code\my-bot"
-    if (-not (Test-Path $repo)) {
-        git clone https://github.com/mrcsXndr/unnamed-bot.git $repo
-    }
-    $gitBash = "C:\Program Files\Git\bin\bash.exe"
-    if ((Test-Path "$repo\tools\sync_settings.sh") -and (Test-Path $gitBash)) {
-        & $gitBash "$repo\tools\sync_settings.sh" pull 2>$null
-    }
-    Set-Location $repo
-    claude --dangerously-skip-permissions --continue $args
+    & pwsh -NoProfile -File "C:\Users\$env:USERNAME\Code\my-bot\scripts\launch.ps1" @args
 }
 Set-Alias -Name mb -Value mybot
 ```
 
-Then `mb` in any terminal launches the bot, syncing latest settings on the way in.
+(Use `powershell` instead of `pwsh` if you're on Windows PowerShell 5.1.)
+Then `mb` in any terminal launches the bot.
 
-### One-line launcher (macOS / Linux)
+#### macOS / Linux
 
-Add to `~/.zshrc` or `~/.bashrc`:
+Make it executable once (`chmod +x scripts/launch.sh`), then add a `mybot`
+function to `~/.zshrc` or `~/.bashrc` that calls the committed script:
 
 ```bash
-mybot() {
-    REPO="$HOME/Code/my-bot"
-    [ ! -d "$REPO" ] && git clone https://github.com/mrcsXndr/unnamed-bot.git "$REPO"
-    [ -n "${SYNC_DRIVE_PATH:-}" ] && bash "$REPO/tools/sync_settings.sh" pull 2>/dev/null
-    cd "$REPO"
-    claude --dangerously-skip-permissions --continue "$@"
-}
+mybot() { bash "$HOME/Code/my-bot/scripts/launch.sh" "$@"; }
 alias mb="mybot"
 ```
+
+Then `mb` launches the bot, prompting continue-or-new on the way in.
 
 ---
 
@@ -158,7 +169,8 @@ alias mb="mybot"
 | Flag | What it does |
 |---|---|
 | `--dangerously-skip-permissions` | Drops the per-action permission prompts. The "dangerous" framing is Anthropic's safety disclaimer; in practice the bot is constrained by `CLAUDE.md` and `.claude/rules/` and won't take risky actions silently. The flag just removes the constant "are you sure?" pop-ups that break flow. |
-| `--continue` | Resumes the last conversation instead of starting fresh. Your bot picks up where you left off. |
+| `--continue` | Resumes the last conversation instead of starting fresh. Your bot picks up where you left off. The launcher's **[1] Continue** option adds this; **[2] Start fresh** omits it. |
+| `--channels plugin:telegram@claude-plugins-official` | Attaches the Telegram channel plugin so inbound Telegram messages arrive in the session as `<channel source="telegram" …>` events. The launchers add this automatically. See `.claude/rules/telegram.md`. |
 
 If you'd rather see the prompts — drop the flag. Everything still works.
 
