@@ -47,7 +47,7 @@ def main():
     if not token or not chat_id:
         sys.exit("error: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID required in .env")
 
-    boundary = f"----GooseDoc{int(time.time()*1000)}"
+    boundary = f"----BotDoc{int(time.time()*1000)}"
     doc_bytes = doc_path.read_bytes()
     mime, _ = mimetypes.guess_type(str(doc_path))
     if not mime:

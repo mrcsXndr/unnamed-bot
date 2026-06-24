@@ -21,14 +21,14 @@ set -euo pipefail
 REPO="$HOME/Code/my-bot"
 if [ ! -d "$REPO" ]; then
     echo "Cloning bot into $REPO ..."
-    git clone https://github.com/mrcsXndr/unnamed-bot.git "$REPO"
+    git clone https://github.com/YOUR_GH_USER/YOUR_REPO.git "$REPO"
 fi
 cd "$REPO"
 
 # --- 2. Optional: pull settings from a sync folder --------------------------
 # If you keep secrets/settings in a cloud/USB folder (see README "Multi-machine
-# sync"), set SYNC_DRIVE_PATH and this pulls the latest copy on the way in.
-if [ -n "${SYNC_DRIVE_PATH:-}" ] && [ -f "$REPO/tools/sync_settings.sh" ]; then
+# sync"), set BOT_SECRETS_DIR (or SYNC_DRIVE_PATH) and this pulls the latest copy.
+if [ -n "${BOT_SECRETS_DIR:-${SYNC_DRIVE_PATH:-}}" ] && [ -f "$REPO/tools/sync_settings.sh" ]; then
     echo "Pulling latest settings from sync folder..."
     bash "$REPO/tools/sync_settings.sh" pull 2>/dev/null || true
 fi

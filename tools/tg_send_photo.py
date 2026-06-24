@@ -59,7 +59,7 @@ def main():
     if not token or not chat_id:
         sys.exit("error: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID required in .env")
 
-    boundary = f"----GoosePhoto{int(time.time()*1000)}"
+    boundary = f"----BotPhoto{int(time.time()*1000)}"
     photo_bytes = photo_path.read_bytes()
 
     body = b""

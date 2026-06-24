@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-loop_state.py — autonomous-loop state machine + auto-pause for Goosey.
+loop_state.py — autonomous-loop state machine + auto-pause for the bot.
 
 Tracks consecutive no-op ticks, daily tick budget, paused state. Each cron-fired
 tick calls `loop_state.py check` first — if exit code 1, the tick exits early
@@ -46,7 +46,7 @@ NOOP_THRESHOLD = 5
 # DAILY_TICK_CAP removed 2026-04-09: stop looping when you
 # actually think you're done, not arbitrary number based". The auto-pause via
 # 5 consecutive no-op ticks (NOOP_THRESHOLD) is the qualitative stop signal —
-# if Goosey can't find work 5 ticks in a row, the loop pauses itself. The
+# if the bot can't find work 5 ticks in a row, the loop pauses itself. The
 # numeric cap was a token-budget guardrail from the early days that no longer
 # matches the intended UX. We still keep `ticks_today` in the state for
 # observability but it doesn't gate anything.

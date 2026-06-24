@@ -4,11 +4,29 @@
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "200000",
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
   },
+  "permissions": {
+    "deny": [
+      "AskUserQuestion",
+      "ExitPlanMode"
+    ]
+  },
   "statusLine": {
     "type": "command",
     "command": "node tools/statusline.js"
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion|ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/block-dialogs.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "",
@@ -31,8 +49,25 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash .claude/hooks/user-prompt-submit.sh",
+            "timeout": 15
+          },
+          {
+            "type": "command",
             "command": "node tools/context_warn_hook.cjs",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/post-subagent.sh",
+            "timeout": 30
           }
         ]
       }
@@ -43,7 +78,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python tools/session_summarize.py --quiet",
+            "command": "PYTHONIOENCODING=utf-8 python tools/v2/precompact_extract.py --stdin || true",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python tools/v2/precompact_timeline.py --stdin || true",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python tools/session_summarize.py --quiet || true",
             "timeout": 15
           }
         ]
@@ -55,7 +100,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/auto-commit.sh"
+            "command": "node tools/memory-sync-hook.cjs",
+            "timeout": 30
           },
           {
             "type": "command",
@@ -69,13 +115,22 @@
           },
           {
             "type": "command",
-            "command": "python tools/session_summarize.py --quiet",
+            "command": "PYTHONIOENCODING=utf-8 python tools/session_summarize.py --quiet || true",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "node tools/memory-sync-hook.cjs",
-            "timeout": 30
+            "command": "PYTHONIOENCODING=utf-8 python tools/state_track.py update my-bot --from-git || true",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/auto-commit.sh"
+          },
+          {
+            "type": "command",
+            "command": "PYTHONIOENCODING=utf-8 python tools/v2/cost_meter.py --stdin || true",
+            "timeout": 20
           }
         ]
       }

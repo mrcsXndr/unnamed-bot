@@ -45,7 +45,7 @@ def main():
     if not token or not chat_id:
         sys.exit("error: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID required in .env")
 
-    boundary = f"----GooseVideo{int(time.time()*1000)}"
+    boundary = f"----BotVideo{int(time.time()*1000)}"
     video_bytes = video_path.read_bytes()
 
     body = b""

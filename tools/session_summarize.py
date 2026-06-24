@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-session_summarize.py — write a structured snapshot of the current Goosey session
+session_summarize.py — write a structured snapshot of the current the bot session
 to memory/sessions/<timestamp>.md, so future ticks can recover context that
 would otherwise be lost on Claude Code's automatic context compaction.
 
