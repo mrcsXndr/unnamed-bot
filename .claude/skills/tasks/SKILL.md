@@ -14,7 +14,7 @@ Usage:
 ## Commands
 
 ### List tasks
-Run `bash tools/gtasks.sh list` and format as:
+Run `bash tools/google/gtasks.sh list` and format as:
 ```
 ## Open Tasks
 **[List Name]**
@@ -22,11 +22,11 @@ Run `bash tools/gtasks.sh list` and format as:
 ```
 
 ### Add task
-`bash tools/gtasks.sh add "<title>"` with optional `--due YYYY-MM-DD` and `--list <list-name>`.
+`bash tools/google/gtasks.sh add "<title>"` with optional `--due YYYY-MM-DD` and `--list <list-name>`.
 
 ### Complete task
-`bash tools/gtasks.sh complete "<task-id>"`.
+`bash tools/google/gtasks.sh complete "<task-id>"`.
 
 ## Optional: sync with a backlog sheet
 
-If the user keeps a Google Sheet as the canonical task board, you can write a small sync script that pulls items assigned to them and mirrors them into Google Tasks. Pattern lives in `tools/sheets.sh` — wire it up if the user asks.
+If the user keeps a Google Sheet as the canonical task board, you can write a small sync script that pulls items assigned to them and mirrors them into Google Tasks. Pattern lives in `tools/google/sheets.sh` — wire it up if the user asks.

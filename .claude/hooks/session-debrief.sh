@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Stop hook: background subagent reviews session and updates context docs
-# Runs async — does not block the user's exit
+# Stop hook: background subagent reviews the session and updates context docs.
+# Runs async — does not block the user's exit.
+#
+# OPT-IN: does nothing unless FEATURE_SESSION_DEBRIEF=1 in .env. It spawns a
+# background `claude --print` run, which costs tokens on every session stop —
+# leave it off unless you want auto-maintained context docs.
 
 PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJECT_DIR" || exit 0
 
-SESSION_LOG="context/session-log.md"
+grep -qsE '^FEATURE_SESSION_DEBRIEF=1' .env 2>/dev/null || exit 0
+
 TIMESTAMP=$(date "+%Y-%m-%d %H:%M")
 
 INPUT=$(cat 2>/dev/null || echo '{}')
@@ -34,10 +39,5 @@ Rules: keep SHORT, only update docs if meaningful, commit silently, no push"
 
 nohup claude --print --model sonnet --dangerously-skip-permissions -p "$PROMPT" \
   > /dev/null 2>&1 &
-
-# Auto-sync on stop
-if [ -n "${SYNC_DRIVE_PATH:-}" ] && [ -d "${SYNC_DRIVE_PATH}" ]; then
-  bash "$PROJECT_DIR/tools/sync_settings.sh" push 2>/dev/null || true
-fi
 
 exit 0

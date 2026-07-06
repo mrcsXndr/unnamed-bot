@@ -4,49 +4,60 @@
 - **ALWAYS ask for confirmation before writing/modifying** any Google Workspace data: Calendar events, Gmail (send/modify), Tasks (add/complete), Sheets (update/append), Drive (upload/delete)
 - Read operations are fine without confirmation
 - This applies to ALL external systems — never modify live data without explicit approval
+- (Asking = a non-blocking Telegram question via `tg_send.py`, never a TUI dialog — see CLAUDE.md rule on blocked dialogs.)
 
 ## CLI-first, MCP where it adds value
-- Prefer `tools/*.sh` CLI wrappers over MCP for Google Workspace ops (less context usage)
+- Prefer `tools/*` CLI wrappers over MCP for Google Workspace ops (less context usage)
+- Use `tools/browser/ab.sh` (agent-browser, isolated Chrome) for ALL browser control — see `.claude/rules/browser.md`
 
-## Architecture
-- **Backend**: `tools/google_workspace.py` — single Python module for all Google API calls
-- **Shell wrappers**: thin scripts that delegate to `google_workspace.py`
-- **Auth**: OAuth via `credentials.json` + `token.json` in project root
-- **Scopes (full read-write)**: calendar, gmail.modify, tasks, spreadsheets, drive
+## Layout
+```
+tools/
+  v2/        journal, timeline, recall, commitments, cost meter, critic,
+             tg_commands, tg_watchdog, update_restart, safe_write, ... (the v2 architecture)
+  tg/        tg_send.py + media senders + transcribe.py (Telegram outbound)
+  browser/   ab.sh (agent-browser wrapper)
+  google/    google_workspace.py backend + calendar/gmail/gtasks/sheets/drive wrappers (OPTIONAL — FEATURE_GOOGLE)
+  infra/     sanitize.py, statusline.js, memory-sync-hook.cjs, resource_monitor.ps1,
+             sync_settings.sh, slack.sh, cloudflare_ops.py
+```
 
 ## Available CLI tools
 | Tool | Purpose | Backend |
 |------|---------|---------|
-| `tools/calendar.sh` | Google Calendar (today/tomorrow/week/next) | google_workspace.py |
-| `tools/gmail.sh` | Gmail (priority/unread/search/recent) | google_workspace.py |
-| `tools/gtasks.sh` | Google Tasks (list/lists/add/complete) | google_workspace.py |
-| `tools/sheets.sh` | Google Sheets (read/update/append) | google_workspace.py |
-| `tools/drive.sh` | Google Drive (search/recent/download/list) | google_workspace.py |
-| `tools/slack.sh` | Slack (channels/dms/history/search/unread) | Slack API (xoxp token) |
-| `tools/sync_settings.sh` | Sync secrets/settings between machines via Google Drive | standalone |
-| `tools/browser.py` | Drive your authenticated Chrome via Playwright CDP (goto/click/type/text/screenshot/cookies) | standalone |
-| `tools/cloudflare_ops.py` | Cloudflare DNS/SSL/cache management | standalone |
-| `tools/tg_send.py` | Send Telegram messages (auto MarkdownV2 + 4000-char split) | Telegram Bot API |
-| `tools/transcribe.py` | Voice-to-text (Groq Whisper) for Telegram voice notes | Groq API |
-| `tools/sanitize.py` | Anti-prompt-injection sanitiser for all external content | standalone |
-| `tools/session_summarize.py` | Snapshot recent repo activity to `memory/sessions/` (compaction recovery) | standalone |
-| `tools/state_track.py` | Per-project state file (in-flight tasks, blockers, decisions) | standalone |
+| `tools/google/calendar.sh` | Google Calendar (today/tomorrow/week/next) | google_workspace.py |
+| `tools/google/gmail.sh` | Gmail (priority/unread/search/recent) | google_workspace.py |
+| `tools/google/gtasks.sh` | Google Tasks (list/lists/add/complete) | google_workspace.py |
+| `tools/google/sheets.sh` | Google Sheets (read/update/append) | google_workspace.py |
+| `tools/google/drive.sh` | Google Drive (search/recent/download/list) | google_workspace.py |
+| `tools/browser/ab.sh` | Browser automation (agent-browser, isolated Chrome) | agent-browser |
+| `tools/tg/tg_send.py` | Send Telegram messages (CommonMark→HTML + split + status footer) | Telegram Bot API |
+| `tools/tg/transcribe.py` | Voice-to-text (Groq Whisper) for Telegram voice notes | Groq API |
+| `tools/infra/sanitize.py` | Anti-prompt-injection sanitiser for all external content | standalone |
+| `tools/infra/slack.sh` | Slack (channels/dms/history/search/unread) | Slack API (xoxp token) |
+| `tools/infra/cloudflare_ops.py` | Cloudflare DNS/SSL/cache management | standalone |
+| `tools/infra/sync_settings.sh` | Mirror secrets to a cloud/USB folder (opt-in) | standalone |
+
+The Google tools are OPTIONAL: if `FEATURE_GOOGLE` is 0 or `credentials.json`
+is absent, skip them cleanly — don't retry or complain.
 
 ## Hooks & framework (wired in `.claude/settings.json`)
-- `tools/memory-sync-hook.cjs` — pulls/pushes `memory/` to your git remote on session start/stop (cross-machine memory). Never force-pushes; flags conflicts.
-- `tools/context_warn_hook.cjs` — `UserPromptSubmit` hook; warns when the context window is filling, optional Telegram alert when critical.
-- `tools/statusline.js` — custom status bar (model, git, context %, lifetime API cost).
-- `tools/session_summarize.py` runs on `PreCompact` and `Stop` so context survives compaction.
+- `.claude/hooks/session-start-v2.sh` — journal/timeline/recall/commitments injection at session start
+- `.claude/hooks/user-prompt-submit.sh` — TG slash-command intercept + large-paste guard
+- `.claude/hooks/post-subagent.sh` — zero-LLM critic envelope per subagent return
+- `tools/v2/precompact_extract.py` + `precompact_timeline.py` — pre-compaction salvage
+- `tools/v2/cost_meter.py` — per-session cost row on Stop → `memory/metrics/sessions.csv`
+- `tools/infra/memory-sync-hook.cjs` — pulls/pushes `memory/` to your git remote (OPT-IN: FEATURE_MEMORY_SYNC)
+- `tools/infra/statusline.js` — status bar (model, git, context %, lifetime API cost)
 
 ## Direct Python usage
-For complex operations, call `google_workspace.py` directly:
 ```bash
-PYTHONIOENCODING=utf-8 python tools/google_workspace.py <command> [args]
+PYTHONIOENCODING=utf-8 python tools/google/google_workspace.py <command> [args]
 ```
-Run `google_workspace.py help` for full command list.
+Always set `PYTHONIOENCODING=utf-8` when calling Python on Windows.
 
 ## Secrets & Credentials
-- `credentials.json` — Google OAuth client secret
+- `credentials.json` — Google OAuth client secret (only `.example` is committed)
 - `token.json` — Google OAuth token (auto-refreshes)
-- `.env` — API keys and tokens
+- `.env` — bot name, Telegram token/chat id, feature flags, API keys
 - **Never commit** these files (listed in `.gitignore`)
