@@ -1,0 +1,16 @@
+# Line endings matter here: bash hooks and Python tools MUST stay LF (a CRLF
+# shebang breaks them on every platform, including Git Bash on Windows).
+* text=auto
+
+*.sh   text eol=lf
+*.py   text eol=lf
+*.js   text eol=lf
+*.cjs  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# PowerShell + VBS are happiest with CRLF on Windows.
+*.ps1  text eol=crlf
+*.vbs  text eol=crlf

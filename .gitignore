@@ -10,17 +10,29 @@ logs/
 .DS_Store
 
 # Generated runtime state (not meant for git)
-.context_state.json
-.context_warn_tg_lock
 MEMORY_SYNC_CONFLICT.md
 screenshots/*
 !screenshots/.gitkeep
-tools/__pycache__/
 __pycache__/
 *.pyc
+
+# v2 runtime state (session-local; regenerated)
+.claude/.current_session_id
+.claude/.bot_state.json
+.claude/.bot_fresh_restart
+.claude/.bot_update_stamp
+.claude/.tg_owner.lock
+.claude/.monitor_ticks.json
+.claude/stash/
+memory/index/
+memory/commitments.json
+tools/infra/.resource_monitor_state.json
+scripts/supervisor-hidden.vbs
 
 # Done-sound binaries (optional, user-supplied)
 .claude/hooks/sounds/done.*
 
-# NOTE: memory/ is intentionally tracked so it syncs across machines.
-# Keep secrets OUT of memory/.
+# NOTE: memory/ is intentionally tracked so it syncs across machines
+# (sessions, metrics, MEMORY.md notes). Keep secrets OUT of memory/.
+# memory/index/ (the recall FTS5 db) and memory/commitments.json are
+# machine-local runtime state and stay untracked.

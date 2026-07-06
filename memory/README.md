@@ -39,7 +39,8 @@ The actual note — keep it short and specific.
 
 ## Cross-machine sync (optional)
 
-`tools/memory-sync-hook.cjs` (wired in `.claude/settings.json`) auto-commits and
+`tools/infra/memory-sync-hook.cjs` (wired in `.claude/settings.json`, OPT-IN via
+FEATURE_MEMORY_SYNC=1 in `.env`) auto-commits and
 pushes `memory/` to your git remote on session end, and pulls on session start —
 so your bot's learned knowledge follows you between computers. It never
 force-pushes; conflicts are flagged in `MEMORY_SYNC_CONFLICT.md` for safe manual
@@ -51,6 +52,8 @@ resolution.
   remote. API keys, tokens, and passwords belong in `.env` (gitignored).
 - Memory is committed to the repo on purpose — that is what makes it portable.
   If your repo is public, treat every memory note as public.
-- Subdirectories `projects/` and `sessions/` hold per-project state files and
-  auto-generated session snapshots respectively (written by `state_track.py`
-  and `session_summarize.py`).
+- Subdirectory `sessions/` holds the per-session v2 channels (journal,
+  timeline, critic envelopes — see `sessions/README.md`); `metrics/` holds the
+  per-session cost CSV and automation logs; `projects/` is free space for
+  per-project notes. `index/` (the recall FTS5 database) and
+  `commitments.json` are machine-local runtime state and are gitignored.
