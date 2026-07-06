@@ -19,7 +19,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
 ]
 
-CRED_DIR = Path(__file__).parent.parent / ".credentials" / "gws"
+CRED_DIR = Path(__file__).resolve().parents[2] / ".credentials" / "gws"
 CLIENT_SECRET = CRED_DIR / "client_secret.json"
 TOKEN_FILE = CRED_DIR / "token.json"
 GWS_CREDS = Path.home() / ".config" / "gws" / "credentials.json"

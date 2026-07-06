@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / ".env"
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 MODEL = "whisper-large-v3-turbo"  # faster, similar quality for short clips

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 DRIVE_DIR="${SYNC_DRIVE_PATH:-}"
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOME_DIR="$HOME"
 
 # Files to sync

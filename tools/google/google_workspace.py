@@ -27,7 +27,7 @@ SCOPES = [
 
 PRIORITY_DOMAINS = []  # Add your priority email domains here, e.g. ["company.com", "partner.com"]
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 CREDS_PATH = ROOT / "credentials.json"
 TOKEN_PATH = ROOT / "token.json"
 
