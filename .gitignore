@@ -26,13 +26,21 @@ __pycache__/
 .claude/stash/
 memory/index/
 memory/commitments.json
+memory/*.lock
+memory/**/*.lock
 tools/infra/.resource_monitor_state.json
 scripts/supervisor-hidden.vbs
 
 # Done-sound binaries (optional, user-supplied)
 .claude/hooks/sounds/done.*
 
-# NOTE: memory/ is intentionally tracked so it syncs across machines
-# (sessions, metrics, MEMORY.md notes). Keep secrets OUT of memory/.
-# memory/index/ (the recall FTS5 db) and memory/commitments.json are
-# machine-local runtime state and stay untracked.
+# Generated per-session working memory + metrics. The template ships DATA-FREE:
+# the scaffold (MEMORY.md, personality.md, READMEs, .gitkeep dirs) is tracked so
+# a fresh clone has structure, but YOUR sessions/metrics/logs stay local. If you
+# want cross-machine memory sync (like the reference bots), remove these lines.
+memory/sessions/*/
+memory/timelines/
+memory/metrics/*.csv
+memory/metrics/*.log
+!memory/sessions/README.md
+!memory/**/.gitkeep

@@ -1,17 +1,25 @@
 # setup.ps1 — interactive-but-scriptable bootstrap wizard (Windows).
 #
 # Gets you from a fresh clone to a runnable bot:
-#   1. Checks prerequisites (claude, python, node, git).
+#   1. Installs missing dependencies (scripts\install_deps.ps1 — Claude Code
+#      CLI + PATH, Node.js, Python 3, pnpm, agent-browser, git; winget
+#      preferred, scoop/choco fallback). Per-component opt-in; already-
+#      installed tools are detected and skipped.
 #   2. Copies .env.example -> .env (if missing).
 #   3. Prompts for the ONLY required inputs: bot name, Telegram bot token,
-#      Telegram chat id. (Telegram can be skipped — terminal-only bot.)
+#      Telegram chat id. The token is validated against the Telegram API and
+#      the chat id can be AUTO-DETECTED (just message your bot once).
+#      (Telegram can be skipped — terminal-only bot.)
 #   4. Initializes the memory dirs + the cross-session recall DB.
-#   5. Wires the Telegram channel plugin and prints pairing instructions.
+#   5. Wires the Telegram channel plugin and PRE-AUTHORIZES your chat id
+#      (no pairing dance needed).
 #   6. Offers every automation as a yes/no OPT-IN (feature flags in .env):
 #      Google Workspace, memory git sync, auto-commit, session debrief,
 #      secrets backup, resource monitors, and the Windows supervisor /
 #      TG-watchdog scheduled tasks. NOTHING GitHub-, backup-, or scheduled-
 #      task-related is enabled unless you say yes.
+#   7. Runs the bundled self-check (scripts\smoke_test.ps1) and prints the
+#      exact launch command.
 #
 # Idempotent: safe to re-run any time; it updates .env in place.
 #
@@ -19,13 +27,16 @@
 #   pwsh -ExecutionPolicy Bypass -File scripts\setup.ps1
 #   pwsh -File scripts\setup.ps1 -Help
 #   pwsh -File scripts\setup.ps1 -DryRun          # print, change nothing
-#   pwsh -File scripts\setup.ps1 -Yes             # accept defaults (opt-ins OFF)
+#   pwsh -File scripts\setup.ps1 -Yes             # accept defaults (installs
+#                                                 #   missing deps, opt-ins OFF)
+#   pwsh -File scripts\setup.ps1 -SkipInstall     # skip the dependency installer
 #   pwsh -File scripts\setup.ps1 -BotName X -TgToken T -TgChatId C -Yes
 
 param(
     [switch]$Help,
     [switch]$DryRun,
     [switch]$Yes,
+    [switch]$SkipInstall,
     [string]$BotName = '',
     [string]$TgToken = '',
     [string]$TgChatId = ''
@@ -36,7 +47,7 @@ $repo = Split-Path $PSScriptRoot -Parent
 Set-Location $repo
 
 if ($Help) {
-    foreach ($line in Get-Content $PSCommandPath -TotalCount 40) {
+    foreach ($line in Get-Content $PSCommandPath -TotalCount 45) {
         if ($line -notmatch '^#') { break }
         Write-Output ($line -replace '^#\s?', '')
     }
@@ -63,6 +74,43 @@ function AskYN {
     return ($ans -match '^(y|yes)$')
 }
 
+function AskYNYes {
+    # Default YES — only for non-automation steps like the self-check; the
+    # opt-in automations always go through AskYN above.
+    param([string]$Prompt)
+    if ($Yes) { return $true }
+    $ans = Read-Host "  $Prompt [Y/n]"
+    return -not ($ans -match '^(n|no)$')
+}
+
+function Test-TgToken {
+    # Returns the bot's @username on success, 'INVALID' on a definitive
+    # rejection, $null when the check couldn't run (network etc — don't block).
+    param([string]$Token)
+    try {
+        $r = Invoke-RestMethod -Uri "https://api.telegram.org/bot$Token/getMe" -TimeoutSec 10
+        if ($r.ok) { return [string]$r.result.username }
+    } catch {
+        $status = $null
+        try { $status = [int]$_.Exception.Response.StatusCode } catch {}
+        if ($status -eq 401 -or $status -eq 404) { return 'INVALID' }
+    }
+    return $null
+}
+
+function Get-TgChatId {
+    # Chat id of the most recent DM to the bot; $null when none/unreachable.
+    param([string]$Token)
+    try {
+        $r = Invoke-RestMethod -Uri "https://api.telegram.org/bot$Token/getUpdates" -TimeoutSec 10
+        if ($r.ok) {
+            $ids = @($r.result | Where-Object { $_.message } | ForEach-Object { $_.message.chat.id })
+            if ($ids.Count -gt 0) { return [string]$ids[-1] }
+        }
+    } catch {}
+    return $null
+}
+
 function Set-DotEnv {
     # Idempotent upsert into .env. Writes LF-only, no BOM (bun + bash both
     # choke on CRLF/BOM'd .env files).
@@ -83,14 +131,25 @@ Say ''
 Say '=== Bot setup wizard ==='
 Say ''
 
-# --- 1. prerequisites --------------------------------------------------------
-Say '[1/6] Checking prerequisites'
+# --- 1. dependencies (detect + offer to install what's missing) ---------------
+Say '[1/7] Dependencies'
+if ($SkipInstall) {
+    Note 'installer skipped (-SkipInstall)'
+} else {
+    $depArgs = @()
+    if ($DryRun) { $depArgs += '-DryRun' }
+    if ($Yes)    { $depArgs += '-Yes' }
+    # in-process call (works under both powershell 5 and pwsh 7)
+    try { & (Join-Path $repo 'scripts\install_deps.ps1') @depArgs } catch { Note "installer error: $($_.Exception.Message)" }
+}
+
+# Re-verify the required four; without them the bot cannot launch.
 $missing = $false
 foreach ($tool in @('claude', 'python', 'node', 'git')) {
     $cmd = Get-Command $tool -ErrorAction SilentlyContinue
-    if ($cmd) {
-        $ver = ''
-        try { $ver = (& $tool --version 2>$null | Select-Object -First 1) } catch {}
+    $ver = ''
+    if ($cmd) { try { $ver = (& $tool --version 2>$null | Select-Object -First 1) } catch {} }
+    if ($cmd -and ($tool -ne 'python' -or $ver)) {
         Note "ok: $tool ($ver)"
     } else {
         Note "MISSING: $tool"
@@ -99,7 +158,8 @@ foreach ($tool in @('claude', 'python', 'node', 'git')) {
 }
 if ($missing) {
     Note ''
-    Note "Install what's missing first:"
+    Note 'Required tools are still missing. If they were JUST installed, open a'
+    Note 'NEW terminal and re-run this wizard. Manual installs:'
     Note '  claude  -> https://claude.com/claude-code'
     Note '  python  -> https://python.org (3.10+)'
     Note '  node    -> https://nodejs.org'
@@ -124,7 +184,7 @@ if (-not (Test-Path '.env')) {
 
 # --- 3. required inputs ---------------------------------------------------------
 Say ''
-Say '[3/6] The three required inputs'
+Say '[3/7] The three required inputs'
 if (-not $BotName) { $BotName = Ask 'What is your bot called?' 'my-bot' }
 Set-DotEnv 'BOT_NAME' $BotName
 
@@ -134,21 +194,42 @@ if (-not $TgToken -and -not $Yes) {
     $TgToken = Ask 'Telegram bot token' ''
 }
 if ($TgToken) {
-    Set-DotEnv 'TELEGRAM_BOT_TOKEN' $TgToken
-    if (-not $TgChatId -and -not $Yes) {
-        Note 'Chat id: message your new bot once, then open'
-        Note '  https://api.telegram.org/bot<TOKEN>/getUpdates'
-        Note 'and read "chat":{"id":...}.'
-        $TgChatId = Ask 'Your Telegram chat id' ''
+    $botUser = Test-TgToken $TgToken
+    if ($botUser -eq 'INVALID') {
+        Note 'WARNING: Telegram rejected that token. Double-check it with @BotFather.'
+        Note 'Continuing anyway — re-run setup to fix it.'
+    } elseif ($botUser) {
+        Note "token OK — your bot is @$botUser"
     }
-    if ($TgChatId) { Set-DotEnv 'TELEGRAM_CHAT_ID' $TgChatId }
+    Set-DotEnv 'TELEGRAM_BOT_TOKEN' $TgToken
+
+    # chat id: auto-detect from the bot's inbox when possible
+    if (-not $TgChatId) {
+        $TgChatId = Get-TgChatId $TgToken
+        if ($TgChatId) { Note "auto-detected your chat id: $TgChatId (from your last message to the bot)" }
+    }
+    if (-not $TgChatId -and -not $Yes) {
+        Note 'Send your bot ANY message on Telegram now, then press Enter to'
+        Note 'auto-detect your chat id — or type the id manually.'
+        $TgChatId = Ask 'Telegram chat id (blank = auto-detect)' ''
+        if (-not $TgChatId) {
+            $TgChatId = Get-TgChatId $TgToken
+            if ($TgChatId) { Note "auto-detected: $TgChatId" }
+        }
+    }
+    if ($TgChatId) {
+        Set-DotEnv 'TELEGRAM_CHAT_ID' $TgChatId
+    } else {
+        Note "no chat id yet — the bot can't message you first; re-run setup after"
+        Note 'messaging your bot once, or set TELEGRAM_CHAT_ID in .env by hand.'
+    }
 } else {
     Note 'skipping Telegram — you can re-run setup later to add it'
 }
 
 # --- 4. memory dirs + recall DB ---------------------------------------------------
 Say ''
-Say '[4/6] Memory + recall index'
+Say '[4/7] Memory + recall index'
 if ($DryRun) {
     Note '(dry-run) would create memory/sessions, memory/metrics + recall DB'
 } else {
@@ -163,29 +244,44 @@ if ($DryRun) {
 
 # --- 5. Telegram channel plugin -----------------------------------------------------
 Say ''
-Say '[5/6] Telegram channel'
+Say '[5/7] Telegram channel'
+$prePaired = $false
 if ($TgToken) {
     $tgDir = "$env:USERPROFILE\.claude\channels\telegram"
-    if ($DryRun) { Note "(dry-run) would write token to $tgDir\.env" }
+    if ($DryRun) {
+        Note "(dry-run) would write token to $tgDir\.env"
+        if ($TgChatId) { Note "(dry-run) would pre-authorize chat id $TgChatId (tools\tg\tg_pair.py)" }
+    }
     else {
         if (-not (Test-Path $tgDir)) { New-Item -ItemType Directory -Force -Path $tgDir | Out-Null }
         # LF-only: the plugin's bun runtime reads a trailing CRLF into the
         # token, which then fails Telegram auth with a confusing 401.
         [IO.File]::WriteAllText("$tgDir\.env", "TELEGRAM_BOT_TOKEN=$TgToken`n")
         Note "token written to $tgDir\.env"
+        # Pre-authorize the owner's chat id -> no pairing dance on first message.
+        if ($TgChatId) {
+            $env:PYTHONIOENCODING = 'utf-8'
+            & python (Join-Path $repo 'tools\tg\tg_pair.py') $TgChatId *> $null
+            if ($LASTEXITCODE -eq 0) {
+                $prePaired = $true
+                Note "chat id $TgChatId pre-authorized — no pairing step needed"
+            }
+        }
     }
-    Note ''
-    Note 'To pair your Telegram account (one-time):'
-    Note '  1. Launch the bot:   pwsh -File scripts\launch.ps1'
-    Note '  2. Message your bot on Telegram — it replies with a pairing code'
-    Note '  3. In the Claude Code terminal run:  /telegram:access pair <code>'
+    if (-not $prePaired) {
+        Note ''
+        Note 'To pair your Telegram account (one-time):'
+        Note '  1. Launch the bot:   pwsh -File scripts\launch.ps1'
+        Note '  2. Message your bot on Telegram — it replies with a pairing code'
+        Note '  3. In the Claude Code terminal run:  /telegram:access pair <code>'
+    }
 } else {
     Note 'skipped (no token)'
 }
 
 # --- 6. opt-in features ---------------------------------------------------------------
 Say ''
-Say '[6/6] Optional automations (all OFF unless you opt in)'
+Say '[6/7] Optional automations (all OFF unless you opt in)'
 
 if (AskYN 'Enable Google Workspace tools (calendar/gmail/tasks/sheets/drive)?') {
     Set-DotEnv 'FEATURE_GOOGLE' '1'
@@ -243,7 +339,39 @@ if (AskYN 'Install the supervisor scheduled task (at-logon + every 3 min)?') {
     }
 }
 
+# --- 7. self-check + next step ----------------------------------------------------------
 Say ''
-Say '=== Done. Launch with:  pwsh -File scripts\launch.ps1 ==='
-Say '    (then message your Telegram bot, or just talk in the terminal)'
+Say '[7/7] Self-check'
+if ($DryRun) {
+    Note '(dry-run) would run scripts\smoke_test.ps1'
+} elseif (AskYNYes 'Run the self-check now (verifies the harness, ~30s)?') {
+    & (Join-Path $repo 'scripts\smoke_test.ps1')
+    if ($LASTEXITCODE -eq 0) {
+        Note 'self-check PASSED'
+    } else {
+        Note 'some self-check items failed (see above) — the bot may still launch;'
+        Note 're-run anytime with: pwsh -File scripts\smoke_test.ps1'
+    }
+} else {
+    Note 'skipped. Run anytime with: pwsh -File scripts\smoke_test.ps1'
+}
+
+Say ''
+Say '=== Setup complete ==='
+Say ''
+Say 'NEXT STEP — launch your bot with exactly this command:'
+Say ''
+Say '    pwsh -File scripts\launch.ps1'
+Say ''
+if ($TgToken) {
+    if ($prePaired) {
+        Say 'Then message your bot on Telegram — your chat id is already authorized,'
+        Say 'so it will answer right away. (Or just talk in the terminal.)'
+    } else {
+        Say 'Then message your bot on Telegram and pair once with'
+        Say '/telegram:access pair <code>. (Or just talk in the terminal.)'
+    }
+} else {
+    Say 'Talk to it in the terminal. Re-run this wizard anytime to add Telegram.'
+}
 exit 0

@@ -77,6 +77,7 @@ heartbeat) instead of relying on the user to re-ask.
 | `coder` | sonnet | Mechanical edits, single-file fixes, per-item batches |
 | `one-shot` | sonnet | Factual lookups, status checks (≤200 words) |
 | `critic` | sonnet | Credibility-score a result on demand |
+| `fable` | fable | The hardest plans/reviews/implementations + creative builds — top tier, top cost; reserve for where model strength changes the outcome |
 
 Default to subagents for anything >1 file or >3 grep-passes — their
 transcripts stay out of the main thread. When in doubt: `planner` to scope,

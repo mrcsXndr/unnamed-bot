@@ -68,10 +68,12 @@ command) roll it up. `tools/infra/statusline.js` shows a live lifetime total.
 | `coder` | sonnet | Mechanical edits, single-file fixes, per-item batches — spawn freely, in parallel |
 | `one-shot` | sonnet | Factual lookups, status checks, single-tool answers (≤200 words) |
 | `critic` | sonnet | Credibility-score a subagent result on demand (5-band rubric, JSON envelope) |
+| `fable` | fable | The hardest work — most ambiguous architecture, deepest cross-layer implementation, rigorous reviews, creative/game builds. Top tier, top cost; reserve for where model strength changes the outcome. Runs in PLAN/IMPLEMENT/REVIEW mode. |
 
 Models are documented defaults — edit the `model:` frontmatter in
-`.claude/agents/*.md` to taste. When in doubt: `planner` first to scope, then
-`senior-coder` or a fan-out of `coder`s, `critic` to verify.
+`.claude/agents/*.md` to taste (e.g. if you don't have Fable access, drop it or
+point it at your best available model). When in doubt: `planner` first to scope,
+then `senior-coder` or a fan-out of `coder`s, `critic` to verify.
 
 **Default to subagents for anything >1 file or >3 grep-passes.** Subagent
 transcripts stay out of the main thread; each finds its own context; long
