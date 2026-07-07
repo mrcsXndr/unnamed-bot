@@ -36,7 +36,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const REPO_DIR = path.resolve(__dirname, '..');
+const REPO_DIR = path.resolve(__dirname, '..', '..');
 const MEMORY_DIR_NAME = 'memory';
 const CONFLICT_FLAG = path.join(REPO_DIR, 'MEMORY_SYNC_CONFLICT.md');
 const REMOTE = process.env.MEMORY_GIT_REMOTE || 'origin';
@@ -55,6 +55,17 @@ function readInput() {
 function isInThisRepo(input) {
   const cwd = (input.cwd || process.cwd()).replace(/\\/g, '/');
   return cwd.toLowerCase().startsWith(REPO_DIR.replace(/\\/g, '/').toLowerCase());
+}
+
+function isEnabled() {
+  // OPT-IN: only sync when FEATURE_MEMORY_SYNC=1 in the repo .env (set by
+  // the setup wizard). This hook pushes to your git remote - off by default.
+  try {
+    const env = fs.readFileSync(path.join(REPO_DIR, '.env'), 'utf-8');
+    return /^FEATURE_MEMORY_SYNC=1\s*$/m.test(env);
+  } catch {
+    return false;
+  }
 }
 
 function git(cmd, opts = {}) {
@@ -200,7 +211,7 @@ function commitAndPush(message) {
 
 const input = readInput();
 
-if (!isInThisRepo(input)) {
+if (!isEnabled() || !isInThisRepo(input)) {
   process.exit(0); // Different project — do nothing.
 }
 

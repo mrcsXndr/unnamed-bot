@@ -28,7 +28,7 @@ USD_TO_EUR = 0.92
 
 
 def _short_project(p: str) -> str:
-    """'C--Users-you-Code-my-bot' -> 'my-bot' (shortens the encoded project slug)."""
+    """'C--Users-me-Code-my-bot' -> 'my-bot' (strip the path prefix)."""
     if not p:
         return "(unknown)"
     marker = "-Code-"

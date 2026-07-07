@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """
-tg_send.py — send a Telegram message with auto MarkdownV2 conversion + split.
+tg_send.py — send a Telegram message with auto HTML conversion + split.
 
-The bot writes natural CommonMark; this script handles Telegram's escape pain.
-Designed to replace direct calls to the channel plugin's `reply` tool when
-formatting matters.
+v2 (2026-04-27): switched from MarkdownV2 to HTML parse mode. MD2 escape rules
+are notoriously brittle and users were seeing literal backslashes / broken
+formatting. HTML mode is simpler — only `&`, `<`, `>` need escaping and the
+tag set is small + predictable.
+
+the bot writes natural CommonMark; this script converts to Telegram HTML.
 
 Usage:
-    python tools/tg_send.py "**Hi** with `code`"
-    echo "long text" | python tools/tg_send.py
-    python tools/tg_send.py --chat-id 123456789 --reply-to 540 "text"
-    python tools/tg_send.py --plain "raw text, no formatting"
+    python tools/tg/tg_send.py "**Hi** with `code`"
+    echo "long text" | python tools/tg/tg_send.py
+    python tools/tg/tg_send.py --chat-id 123456789 --reply-to 540 "text"
+    python tools/tg/tg_send.py --plain "raw text, no formatting"
 
 Behavior:
     - Reads TELEGRAM_BOT_TOKEN from the project .env
-    - Default chat_id = TELEGRAM_CHAT_ID from .env (default user)
-    - Converts CommonMark idioms (**bold**, *italic*, `code`, ```block```,
-      [text](url)) to Telegram MarkdownV2, escaping every reserved char in
-      surrounding text per the spec
-    - Splits at 4000 chars on newline boundaries (4096 is Telegram's hard cap)
-    - On HTTP 400 parse error, retries the same text in plain mode (no
-      formatting, no escaping)
-    - Prints sent message_id(s) one per line, exits non-zero on send failure
+    - Default chat_id = TELEGRAM_CHAT_ID from .env (the operator)
+    - Converts CommonMark idioms (**bold**, *italic*, _italic_, `code`,
+      ```block```, [text](url)) to Telegram HTML
+    - Splits at 4000 chars on newline boundaries
+    - On HTTP 400 parse error, retries the same text in plain mode
 
 Exit codes:
     0  all chunks sent
@@ -38,7 +38,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / ".env"
 
 # MarkdownV2 reserved chars in normal text. Backslash MUST be escaped first
@@ -46,7 +46,7 @@ ENV_FILE = ROOT / ".env"
 # literal `\` and replaces it with `\\` before moving past — the inserted `\`
 # is not re-scanned). Without `\` in the set, any literal backslash in the
 # source becomes Telegram's escape prefix for the next char, which throws a
-# parse error if that char isn't a reserved one.
+# parse error if that char isn't a reserved one. 
 MD2_RESERVED = r"\_*[]()~`>#+-=|{}.!"
 MD2_RESERVED_RE = re.compile(r"([\\_\*\[\]\(\)~`>#\+\-=\|\{\}\.!])")
 
@@ -76,71 +76,77 @@ def escape_md2_url(text: str) -> str:
     return text.replace("\\", "\\\\").replace(")", "\\)")
 
 
-def to_markdownv2(text: str) -> str:
+def html_escape(s: str) -> str:
+    """Escape only the 3 chars Telegram HTML cares about. Inside <code> and <pre>
+       the same 3 chars need escaping; everything else passes through clean."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def to_html(text: str) -> str:
     """
-    Convert natural CommonMark text to Telegram MarkdownV2.
+    Convert natural CommonMark text to Telegram HTML.
 
     Recognizes:
-        ```fenced code blocks```          (preserved verbatim, content not escaped except \\ and `)
-        `inline code`                      (preserved verbatim)
-        [link text](https://url)           (text escaped, url ) and \\ escaped)
-        **bold**                           → *bold*
-        *italic*                           (already MD2 syntax — left alone if not part of **)
+        ```fenced code blocks```          → <pre><code>...</code></pre>
+        `inline code`                      → <code>...</code>
+        [link text](https://url)           → <a href="url">link text</a>
+        **bold**                           → <b>bold</b>
+        *italic* / _italic_                → <i>italic</i>
+        # heading / ## subhead             → <b>heading</b> (TG has no h-tags)
 
-    Everything else has reserved chars escaped per the MD2 spec.
-    Em-dashes and other Unicode pass through clean (not in escape list).
+    Everything else passes through with HTML-escaping (& < > → entities).
+    Em-dashes, emoji, bullets, etc all render fine.
     """
     placeholders: list[str] = []
 
     def stash(s: str) -> str:
         idx = len(placeholders)
         placeholders.append(s)
-        # Use a marker that won't survive escaping naturally — lots of unique chars
         return f"\x00P{idx}P\x00"
 
-    # Step 1 — fenced code blocks (greedy non-overlapping)
-    # Inside code blocks, `\` MUST be escaped to `\\` per MD2 spec — otherwise
-    # a stray `\` consumes the next char (potentially the closing backtick) and
-    # the entire rest of the message becomes "still inside code".
+    # Step 1 — fenced code blocks
     def repl_block(m):
-        body = m.group(1).replace("\\", "\\\\")
-        return stash("```" + body + "```")
-    text = re.sub(r"```([\s\S]*?)```", repl_block, text)
+        lang = (m.group(1) or "").strip()
+        body = html_escape(m.group(2))
+        if lang:
+            return stash(f'<pre><code class="language-{html_escape(lang)}">{body}</code></pre>')
+        return stash(f'<pre>{body}</pre>')
+    text = re.sub(r"```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```", repl_block, text)
 
-    # Step 2 — inline code (single backticks, non-greedy)
+    # Step 2 — inline code
     def repl_inline(m):
-        body = m.group(1).replace("\\", "\\\\")
-        return stash("`" + body + "`")
+        return stash(f"<code>{html_escape(m.group(1))}</code>")
     text = re.sub(r"`([^`\n]+)`", repl_inline, text)
 
     # Step 3 — links [text](url)
     def repl_link(m):
-        link_text = m.group(1)
-        url = m.group(2)
-        return stash(f"[{escape_md2(link_text)}]({escape_md2_url(url)})")
+        link_text = html_escape(m.group(1))
+        url = html_escape(m.group(2))
+        return stash(f'<a href="{url}">{link_text}</a>')
     text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", repl_link, text)
 
-    # Step 4 — convert **bold** to MD2 *bold* (stash it so * don't get escaped)
+    # Step 4 — bold (**text** OR __text__)
     def repl_bold(m):
-        return stash("*" + escape_md2(m.group(1)) + "*")
-    text = re.sub(r"\*\*([^*\n]+)\*\*", repl_bold, text)
+        return stash(f"<b>{html_escape(m.group(1) or m.group(2))}</b>")
+    text = re.sub(r"\*\*([^*\n]+)\*\*|__([^_\n]+)__", repl_bold, text)
 
-    # Step 5 — convert _italic_ to stash (preserve, don't escape underscores)
+    # Step 5 — italic (*text* OR _text_, but not adjacent to word chars to avoid
+    # snake_case false positives)
     def repl_italic(m):
-        return stash("_" + escape_md2(m.group(1)) + "_")
-    text = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", repl_italic, text)
+        return stash(f"<i>{html_escape(m.group(1) or m.group(2))}</i>")
+    text = re.sub(r"(?<![*\w])\*([^*\n]+)\*(?!\w)|(?<![_\w])_([^_\n]+)_(?!\w)",
+                  repl_italic, text)
 
-    # Step 6 — escape everything else
-    text = escape_md2(text)
+    # Step 6 — markdown headings → bold (TG HTML has no <h1>/<h2>)
+    def repl_heading(m):
+        return stash(f"<b>{html_escape(m.group(2))}</b>")
+    text = re.sub(r"(?m)^(#{1,6})\s+(.+)$", repl_heading, text)
 
-    # Step 7 — restore placeholders. They got escaped (\x00 won't be touched
-    # since it's not in MD2_RESERVED, and the digits/letters are fine), but the
-    # marker is intact. Walk and replace IN A FIXED-POINT LOOP because outer
-    # placeholders (bold/italic) wrap inner ones (code/links) — restoring the
-    # outer first re-exposes the inner marker, which we then replace on the
-    # next pass. Without the loop, ` `code` ` inside `**bold**` would leak
-    # the literal `\x00P0P\x00` marker into the output.
-    for _ in range(10):  # safety bound, deeper nesting than this is unlikely
+    # Step 7 — escape everything else (only & < >)
+    text = html_escape(text)
+
+    # Step 8 — restore placeholders (fixed-point loop for nesting)
+    for _ in range(10):
         changed = False
         for i, original in enumerate(placeholders):
             marker = f"\x00P{i}P\x00"
@@ -151,6 +157,10 @@ def to_markdownv2(text: str) -> str:
             break
 
     return text
+
+
+# Back-compat alias — old callers may import to_markdownv2.
+to_markdownv2 = to_html
 
 
 def split_chunks(text: str, max_len: int = MAX_CHUNK) -> list[str]:
@@ -206,6 +216,8 @@ def main() -> int:
     p.add_argument("--plain", action="store_true",
                    help="Send as plain text (skip MD2 conversion + escaping)")
     p.add_argument("--quiet", action="store_true", help="Suppress output on success")
+    p.add_argument("--no-status", action="store_true",
+                   help="Skip the v2 status footer (default: append unless BOT_TG_STATUS=0)")
     args = p.parse_args()
 
     text = args.text if args.text is not None else sys.stdin.read()
@@ -214,6 +226,25 @@ def main() -> int:
         return 1
 
     env = load_env()
+
+    # Append v2 status footer (default on; opt-out via flag, env var, or .env)
+    status_pref = os.environ.get("BOT_TG_STATUS") or env.get("BOT_TG_STATUS") or "1"
+    if not args.no_status and status_pref != "0":
+        try:
+            import subprocess as _sp
+            python_exe = sys.executable or "python"
+            footer_script = ROOT / "tools" / "v2" / "status_footer.py"
+            if footer_script.exists():
+                r = _sp.run(
+                    [python_exe, str(footer_script)],
+                    capture_output=True, text=True, timeout=4, encoding="utf-8",
+                )
+                footer = (r.stdout or "").strip()
+                if footer:
+                    text = text.rstrip() + "\n\n" + footer
+        except Exception:
+            pass
+
     token = env.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = args.chat_id or env.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
@@ -224,9 +255,9 @@ def main() -> int:
         chunks = split_chunks(text)
         parse_mode = None
     else:
-        md2 = to_markdownv2(text)
-        chunks = split_chunks(md2)
-        parse_mode = "MarkdownV2"
+        html = to_html(text)
+        chunks = split_chunks(html)
+        parse_mode = "HTML"
 
     sent_ids = []
     for i, chunk in enumerate(chunks):
@@ -235,9 +266,9 @@ def main() -> int:
         result = send_chunk(token, chat_id, chunk, parse_mode, reply_to)
         if not result.get("ok"):
             # Fall back to plain text once if it was a parse error
-            if parse_mode == "MarkdownV2" and "parse" in str(result.get("error", "")).lower():
+            if parse_mode == "HTML" and "parse" in str(result.get("error", "")).lower():
                 # Log the converted text + the API error so future failures are debuggable.
-                print(f"  md2 parse failed on chunk {i+1}, falling back to plain", file=sys.stderr)
+                print(f"  html parse failed on chunk {i+1}, falling back to plain", file=sys.stderr)
                 print(f"    api error: {str(result.get('error', ''))[:300]}", file=sys.stderr)
                 print(f"    converted text head: {chunk[:200]!r}", file=sys.stderr)
                 # Re-split the ORIGINAL text in plain mode and resend everything

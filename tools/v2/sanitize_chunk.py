@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sanitize a memory chunk before it is injected into the session prompt.
 
-Thin gate over tools/sanitize.py (does NOT reimplement sanitization). Reads a
+Thin gate over tools/infra/sanitize.py (does NOT reimplement sanitization). Reads a
 chunk from stdin, runs sanitize.scan + sanitize.full_sanitize, and decides:
 
   - HIGH / CRITICAL risk  -> emit a [BLOCKED: ...] marker instead of the chunk
@@ -22,8 +22,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# sanitize.py lives in tools/ (one level up from tools/v2/).
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# tools/infra/sanitize.py lives at ../infra relative to tools/v2/
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "infra"))
 
 
 def main(argv: list[str]) -> int:
@@ -37,7 +37,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     try:
-        import sanitize  # tools/sanitize.py
+        import sanitize  # tools/infra/sanitize.py
         findings = sanitize.scan(raw)
         risk = sanitize.get_risk_level(findings)
         if risk in ("HIGH", "CRITICAL") and not no_block:

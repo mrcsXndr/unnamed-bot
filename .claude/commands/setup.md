@@ -123,12 +123,12 @@ Configure `SYNC_DRIVE_PATH` in `.env` based on their choice. For USB: set to the
 Only set up what they chose. For each integration:
 
 ### Google Workspace (Calendar, Gmail, Tasks, Drive, Sheets)
-Do as much as possible FOR the user. Use browser automation (claude-in-chrome MCP) if available:
+Do as much as possible FOR the user. Use browser automation (tools/browser/ab.sh) if available:
 
 1. Open Chrome to https://console.cloud.google.com/ — navigate for them if browser tools work
 2. If no browser tools: give them the EXACT URL to click, one step at a time, wait for confirmation
 3. Once they download `credentials.json`: detect where it landed (likely Downloads folder), move it to the project root automatically
-4. Trigger the OAuth flow automatically: `python tools/google_workspace.py calendar-today`
+4. Trigger the OAuth flow automatically: `python tools/google/google_workspace.py calendar-today`
 5. Tell them to click "Allow" in the browser popup — that's the ONLY manual step
 6. Verify it worked, report results
 
@@ -145,7 +145,7 @@ The user should click a few links and press "Allow" — everything else is autom
 3. "Go to OAuth & Permissions → User Token Scopes → add: channels:history, channels:read, groups:history, groups:read, im:history, im:read, users:read, search:read"
 4. "Install to workspace → copy the token that starts with xoxp-"
 5. "I'll add it to your .env file"
-6. Test: `bash tools/slack.sh channels`
+6. Test: `bash tools/infra/slack.sh channels`
 
 ### Cloudflare (if chosen)
 1. "Create a free account at dash.cloudflare.com"

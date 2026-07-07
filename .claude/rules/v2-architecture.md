@@ -1,203 +1,150 @@
 # v2 Architecture — Three Channels + Memory Loop + Tiered Agents
 
-Inspired by Slack's agent-context pattern and holographic-memory ("Hermes")
-patterns. Goals: cut token spend on a typical day, carry durable memory across
-sessions WITHOUT re-reading transcripts, and dispatch each task to the
-right-priced model so you never burn the top tier on a one-shot lookup or spin a
-cheap model on architecture.
+Goal: cut token spend dramatically on a typical day, carry durable memory
+across sessions WITHOUT re-reading transcripts, and dispatch each task to the
+right-priced model so you never burn a top-tier model on a one-shot lookup.
 
 ## The Three Channels
 
 | Channel | Purpose | Storage | Lifetime |
 |---|---|---|---|
-| **Director's Journal** | Live structured working memory. Findings / decisions / open questions / hypotheses / observations / actions captured AS THEY HAPPEN. | `memory/sessions/<id>/journal.md` | per session |
-| **Critic's Timeline** | Distilled chronological narrative built from the journal. | `memory/sessions/<id>/timeline.md` | per session, then promoted to `memory/timelines/<week>.md` |
-| **Critic's Review** | Per-subagent credibility-graded findings (manual / on-demand). | `memory/sessions/<id>/critic-<ts>.json` | per subagent return |
+| **Director's Journal** | Live structured working memory. Findings / decisions / open questions / hypotheses / actions captured AS THEY HAPPEN. | `memory/sessions/<id>/journal.md` | per session |
+| **Timeline** | Distilled chronological narrative built periodically from the journal. | `memory/sessions/<id>/timeline.md` | per session |
+| **Critic envelope** | Per-subagent credibility JSON (zero-LLM by default). | `memory/sessions/<id>/critic-<ts>.json` | per subagent return |
 
-The Director (main thread) is the orchestrator: it holds long-running plan
-state, dispatches to subagents, and writes the Journal. Subagent transcripts stay
-OUT of the main thread — that is how main context is preserved.
+The main thread (the **Director**) writes journal entries **liberally**:
+journal + timeline replace re-reading message history after compaction. If you
+don't write it down, it's gone.
 
-## The Tiered Agent Set (`.claude/agents/`)
+```bash
+PYTHONIOENCODING=utf-8 python tools/v2/journal.py append "$SESSION_ID" decision "switching deploys to dev-only by default"
+```
 
-| Agent | Model | When |
+Six entry kinds: `finding` (synthesised conclusions), `decision` (chosen-path
+commitments), `observation` (raw tool/file output worth remembering),
+`question` (blockers needing the user), `hypothesis` ("next session try X"),
+`action` (things performed).
+
+## Memory loop (all zero- or low-LLM)
+
+- **#1 Cross-session recall** — `tools/v2/recall.py`: FTS5 index over ALL
+  session journals + timelines, refreshed at session start. To recall what any
+  past session found/decided WITHOUT re-reading journals:
+  `python tools/v2/recall.py search "<query>" [--min-trust X]`.
+- **#2 Multi-writer safety** — `tools/v2/safe_write.py` (lock + atomic rename)
+  guards the shared stores (commitments, recall feedback).
+- **#3 Memory budget header** — session-start emits `[memory: …] [journal: …]`
+  usage lines so the Director self-consolidates before they bloat.
+- **#4 Trust scoring** — each recalled fact carries `trust_score` (default
+  0.5). When a fact proves wrong: `python tools/v2/recall.py feedback <id>
+  unhelpful` (−0.10; `helpful` +0.05) and it decays out of future recall.
+- **#5 Pre-compaction extraction** — `tools/v2/precompact_extract.py` +
+  `precompact_timeline.py` on the `PreCompact` hook salvage durable
+  decisions/findings before context is discarded.
+
+## Commitments loop
+
+Due-dated follow-ups that resurface automatically instead of relying on the
+user to re-ask. `tools/v2/commitments.py` over `memory/commitments.json`:
+`add "<text>" [--due <ISO|Nd|Nh|Nm|tomorrow>]`, `list [--open]`, `done <id>`,
+`surface` (printed at session start). On Windows with the supervisor
+installed, `commitments.py heartbeat` runs every tick and TG-alerts due items
+(cooldown `BOT_HEARTBEAT_COOLDOWN_H`, default 6h). Notify-only by design.
+
+## Cost meter
+
+`tools/v2/cost_meter.py` runs on the `Stop` hook, prices the session's tokens
+from its transcript JSONL, and appends one row to
+`memory/metrics/sessions.csv`. `tools/v2/cost_report.py` (and the TG `/costs`
+command) roll it up. `tools/infra/statusline.js` shows a live lifetime total.
+
+## Tiered subagents (`.claude/agents/`)
+
+| Agent | Default model | When |
 |---|---|---|
-| `planner` | Opus | Architecture, multi-file refactor design, deep planning |
-| `senior-coder` | Opus | Architecture-aware multi-file code, deep-thinking changes |
-| `coder` | Sonnet | Single-file edits, mechanical work, per-item tasks |
-| `one-shot` | Sonnet | Factual lookups, status pings, single-tool answers |
-| `critic` | Sonnet | Credibility scoring of subagent output (on-demand) |
-| `fable` | Fable | Top-tier generalist (PLAN/IMPLEMENT/REVIEW) for the hardest plans, deep reviews, complex/creative coding. When Fable is unavailable, this work falls back to the Opus tiers. |
+| **Director** (main thread) | your default | Always. Orchestrator: holds plan state, reads journal+timeline, dispatches subagents, replies on TG. |
+| `planner` | opus | Architecture, multi-file refactor design, trade-offs that cost hours if wrong |
+| `senior-coder` | opus | Plan locked, implementation needs top-tier care (cross-layer bugs, new abstractions) |
+| `coder` | sonnet | Mechanical edits, single-file fixes, per-item batches — spawn freely, in parallel |
+| `one-shot` | sonnet | Factual lookups, status checks, single-tool answers (≤200 words) |
+| `critic` | sonnet | Credibility-score a subagent result on demand (5-band rubric, JSON envelope) |
+| `fable` | fable | The hardest work — most ambiguous architecture, deepest cross-layer implementation, rigorous reviews, creative/game builds. Top tier, top cost; reserve for where model strength changes the outcome. Runs in PLAN/IMPLEMENT/REVIEW mode. |
 
-The default model for the main thread is set in `.claude/settings.json`.
+Models are documented defaults — edit the `model:` frontmatter in
+`.claude/agents/*.md` to taste (e.g. if you don't have Fable access, drop it or
+point it at your best available model). When in doubt: `planner` first to scope,
+then `senior-coder` or a fan-out of `coder`s, `critic` to verify.
 
-## Hermes memory loop (the durable patterns)
-
-- **#1 cross-session recall** — `tools/v2/recall.py` (FTS5 over every
-  `memory/sessions/*/journal.md` + promoted timelines), refreshed at session
-  start. Zero-LLM, ~ms recall: `recall.py search "<query>" [--min-trust X]`.
-- **#2 multi-writer safety** — `tools/v2/safe_write.py` (cross-platform lock +
-  atomic rename + drift guard). The substrate journal/salvage writes go through.
-- **#3 memory budget header** — emitted by the SessionStart hook so the assistant
-  SEES how full MEMORY.md / the journal are and self-consolidates before bloat.
-- **#4 trust scoring + asymmetric feedback + retrieval decay** — in `recall.py`
-  (`search` ranks by FTS5 rank THEN `trust_score DESC`; `feedback <id>
-  helpful|unhelpful` nudges +0.05 / −0.10 clamped). Wrong facts decay out.
-- **#5 pre-compaction extraction** — `tools/v2/precompact_extract.py` on the
-  PreCompact hook salvages durable `decision`/`finding` entries before context
-  is discarded; `tools/v2/precompact_timeline.py` rebuilds the timeline so a
-  forced-fresh restart re-injects fresh context.
+**Default to subagents for anything >1 file or >3 grep-passes.** Subagent
+transcripts stay out of the main thread; each finds its own context; long
+sessions stay viable because the journal is the long-term memory.
 
 ## Hook order
 
 ```
-session-start-context.sh  creates journal + injects journal/timeline + budget into the system prompt
-        |
-        v
-user-prompt-submit.sh     large-paste guard (stash + redirect), else pass through
-        |
-        v
-main thread or subagent runs
-        |
-        v
-SubagentStop -> post-subagent.sh   appends a journal note that a subagent returned
-        |
-        v
-PreCompact -> precompact_extract.py (salvage) + precompact_timeline.py (rebuild)
-        |
-        v
-Stop hooks (memory-sync, play-sound, session-debrief, session_summarize, state_track, auto-commit, cost_meter)
+SessionStart  -> session-start-v2.sh     recall index refresh + journal create +
+                                         journal/timeline/budget/commitments injection
+UserPromptSubmit -> user-prompt-submit.sh  TG slash-command intercept + large-paste guard
+   (main thread or subagent runs)
+SubagentStop  -> post-subagent.sh        zero-LLM critic envelope + journal note
+PreCompact    -> precompact_extract.py + precompact_timeline.py   salvage
+Stop          -> memory-sync (opt-in), play-sound, session-debrief (opt-in),
+                 auto-commit (opt-in), cost_meter.py
 ```
 
-All hooks are STRICTLY FAIL-OPEN: each swallows its own errors and exits 0 so
-session start/stop is never broken.
+Every hook is STRICTLY FAIL-OPEN: it swallows its own errors and exits 0 so
+session start/stop never breaks.
 
-## When to write to the journal MANUALLY (from the main thread)
+## TG slash commands (auto-intercepted)
 
-- Significant decisions ("we're going with X, not Y")
-- Open questions that block forward motion
-- Hypotheses to test next session
-- Blockers (with owner + ETA)
+| Command | Effect |
+|---|---|
+| `/status` | Single-line status footer (cwd, git, ctx, sess, TG) |
+| `/journal [n]` | Last N journal entries (default 30) |
+| `/timeline` | Current distilled timeline |
+| `/compact` | Distill journal → timeline + write checkpoint marker |
+| `/tasks` | Top 30 rows of the task board sheet (needs TASK_BOARD_SHEET_ID) |
+| `/costs [Nd]` | Per-session cost rollup from sessions.csv |
+| `/update` | Update Claude Code; self-restart if a new version landed (`dry-run`/`check` are safe) |
+| `/help` | List commands |
 
-```bash
-PYTHONIOENCODING=utf-8 python tools/v2/journal.py append "$SESSION_ID" decision "<the decision>"
-```
-
-Kinds (6 entry types): `finding`, `decision`, `observation`, `question`,
-`hypothesis`, `action`. Use `observation` for raw tool/file output worth
-remembering, `finding` for synthesised conclusions, `decision` for chosen-path
-commitments, `question` for blockers, `hypothesis` for "next session try X",
-`action` for things performed.
+Add new commands in `tools/v2/tg_commands.py` (HANDLERS dict).
 
 ## Critic flow
 
-The critic is a Claude Code subagent (`.claude/agents/critic.md`). The
-`SubagentStop` hook (`post-subagent.sh`) writes a cheap journal note only — it
-does NOT auto-grade (auto-grading every subagent return is pure cost with no
-payoff). For an actual credibility grade, dispatch the `critic` subagent
-deliberately, or run a `/critic` slash command if you add one.
+The automatic per-subagent LLM scoring is deliberately NOT wired — the
+`SubagentStop` hook writes a cheap ZERO-LLM envelope only. For an actual
+credibility grade, invoke deliberately: `Agent(subagent_type="critic", ...)`
+or the `/critic <result-file>` command. A gated, deliberate critic is the
+defensible version; auto-firing on every subagent return is pure cost.
 
-## Cost meter
+## Long-running sessions are the goal
 
-`tools/v2/cost_meter.py` runs on the `Stop` hook and appends one row per session
-to `memory/metrics/sessions.csv`:
-`session_id,ts_start,ts_end,project,input_tok,output_tok,cache_read_tok,
-cache_creation_tok,subagent_count,model_mix,usd_est`. Pricing mirrors
-`tools/statusline.js`. `tools/v2/cost_report.py` rolls the CSV up
-(`--days N`, `--tg`).
+With journal + timeline carrying state across compaction, there's rarely a
+reason to start fresh. Default to `--continue` (the launch scripts do). Fresh
+session only for: hard migrations, intentional context reset, or debugging the
+harness itself. The auto-restart flow forces FRESH via the one-shot
+`.claude/.bot_fresh_restart` marker (Claude Code's aged-session resume picker
+blocks headless loops); journal/timeline/recall make that ~lossless.
 
-## Telegram single-poller invariant + auto-heal
+## Windows resilience layer (opt-in; see docs/SETUP.md)
 
-The TG Bot API allows only ONE `getUpdates` long-poller per bot token. If a
-second instance launches with `--channels plugin:telegram@...` pointed at the
-same bot, it steals the poll slot; the first poller then 409s and PERMANENTLY
-gives up while its process stays alive — so OUTBOUND (`tg_send.py`) keeps working
-but INBOUND silently dies.
+- **Supervisor** (`scripts/supervisor.ps1` + `register-supervisor.ps1`) —
+  scheduled task, at-logon + every 3 min: exactly one healthy instance,
+  cold-start after reboot/crash, poller heal, commitments heartbeat, optional
+  monitors. Mutex-serialised, start-capped, strictly fail-open.
+- **TG watchdog** (`tools/v2/tg_watchdog.py` + `register-tg-watchdog.ps1`) —
+  standalone poller auto-heal for setups without the full supervisor. Probes
+  the getUpdates slot (409=ALIVE trick); on confirmed-dead + idle session,
+  triggers a detached restart. 3-heals-per-30-min backoff.
+- **Self-restart** (`scripts/restart-bot.ps1`, used by `/update` and the
+  supervisor) — wait-for-old-PID-then-relaunch, so two instances never attach
+  the same conversation.
 
-Two-layer fix:
-- **Owner-lock (prevention)** — `scripts/launch.ps1` claims
-  `.claude/.tg_owner.lock` (PID + ts) before launch and only passes `--channels`
-  if no LIVE foreign owner holds it (live owner PID AND live `bot.pid`). Stops a
-  second instance from dual-polling.
-- **Watchdog (auto-heal) — BRIDGE-FIRST** — `tools/v2/tg_watchdog.py` probes the
-  slot via the getUpdates-409 trick (409=ALIVE; all-200 across 8 spaced probes =
-  DEAD; other=UNKNOWN → no action). On confirmed DEAD it heals bridge-first:
-  1. **Bridge kick** (works even while the session is BUSY) — kill JUST the
-     poller subprocess (`~/.claude/channels/telegram/bot.pid`); the channel-plugin
-     host stays loaded and respawns a fresh poller that re-claims the slot. The
-     conversation + in-flight work are untouched. Name-guarded (`bun`/`node`)
-     against PID reuse; re-probes after `KICK_RESETTLE_S` to confirm.
-  2. **Full restart** (fallback) — only if the kick did NOT restore polling, fall
-     back to the idle-gated detached session restart (reuses `update_restart.py`
-     machinery). Backoff: 3 heals / 30 min, logged to
-     `memory/metrics/tg_heals.log`. STRICTLY FAIL-OPEN.
-  Register via `scripts/register-tg-watchdog.ps1` (prints the schtasks line by
-  default; `-Confirm` actually creates the task).
+## Token-saving discipline (non-negotiable)
 
-## Auto-start daemon + supervisor
-
-- **`scripts/bot-supervisor.ps1`** — single authority for "exactly one healthy
-  bot is running." Resolves bot liveness from the owner-lock (launcher pwsh PID +
-  its `claude.exe` child) and the poller via `tg_watchdog.py --probe-only`.
-  Decisions: no bot process → COLD-START; bot alive + poller DEAD → RESTART (via
-  `restart-bot.ps1`); bot alive + poller ALIVE/UNKNOWN → no-op. Single-instance
-  via a `Global\AssistantBotSupervisor` mutex; start-backoff (MaxStartsPerWindow /
-  WindowMin); STRICTLY FAIL-OPEN. `--probe-only` / `--dry-run`. Cold-start must
-  NOT go through `restart-bot -OldPid 0` (PID 0 is the System Idle Process and
-  reads "alive").
-- **`scripts/register-bot-supervisor.ps1`** — installs the `AssistantBot-Supervisor`
-  scheduled task with TWO triggers: At Logon (boot daemon, cold-start) and every
-  N minutes (liveness). Runs in the INTERACTIVE user session so the launched WT
-  window is visible; the supervisor itself runs hidden (via a generated VBS shim
-  to avoid a console flash). `-Unregister` removes it.
-
-### Resumability across restarts
-
-- **`--continue` restart** reuses the SAME `session_id` → journal/timeline
-  re-inject the same thread cleanly. **Lossless.**
-- **Forced-FRESH restart** (supervisor cold-start + `restart-bot` default, chosen
-  to dodge the blocking aged-session resume picker) starts a NEW `session_id`.
-  The thread is RECONSTRUCTED — not resumed by id — because the SessionStart hook
-  re-injects the newest prior `timeline.md` + `journal.md` tail. Lossy-by-design:
-  in-flight TODO state not yet journaled is lost. Mitigation: journal
-  aggressively + both PreCompact hooks fire before a compact.
-
-## Self-update + restart
-
-`tools/v2/update_restart.py` runs `claude update`, and ONLY if a new version
-landed, posts a notice, spawns `restart-bot.ps1` DETACHED (passing the live
-claude PID), and terminates the live process so the relaunch resumes the
-now-single conversation. Modes: default flow, `--dry-run`, `--check-only`,
-`--restart-only` (smoke test the restart dance), `--auto` (gated autonomous —
-gates: not-checked-today, update-available, session-idle). The `--auto` gate
-logic exists but is NOT auto-wired to any hook/timer; invoke it deliberately.
-
-## Memory sanitization before injection (block-on-poison)
-
-The SessionStart hook injects journal / timeline / last-session into the system
-prompt; those channels can carry pasted content = an injection persistence
-vector. Each chunk passes through `tools/v2/sanitize_chunk.py` (thin gate over
-`tools/sanitize.py`): HIGH/CRITICAL risk → replaced with a `[BLOCKED: … ]`
-marker; otherwise the cleaned chunk is injected. FAIL-OPEN: if sanitize can't
-run, the raw chunk is injected (never breaks session start).
-
-## Marker / state files (gitignored)
-
-- `.claude/.current_session_id` — the live session id, written by SessionStart.
-- `.claude/.bot_v2_state.json` — authoritative PID record (launcher + supervisor).
-- `.claude/.tg_owner.lock` — TG single-poller owner-lock.
-- `.claude/.bot_fresh_restart` — one-shot marker; forces a FRESH relaunch, deleted on launch.
-- `.claude/.bot_v2_update_stamp` — daily `claude update` check stamp.
-
-## Env vars (all optional, sensible defaults)
-
-- `BOT_V2_LOCK_TIMEOUT` (safe_write lock timeout, default 10s)
-- `BOT_V2_DISTILL_MODEL` / `BOT_V2_DISTILL_TIMEOUT` (timeline distill)
-- `BOT_V2_WEEKLY_GATE_H` (min hours between weekly distills, default 6)
-- `BOT_V2_JOURNAL_HEAD_BYTES` (journal load cap at session start, default 20000)
-- `BOT_V2_SIZE_THRESHOLD` (inbound large-paste guard threshold, default 50000)
-- `BOT_V2_MAX_CONTEXT` (status footer context denominator, default 500000)
-- `BOT_IDLE_MIN` (update_restart idle gate, default 5m)
-- `BOT_PROJECT_SLUG` (override the derived Claude Code project slug)
-- `BOT_PYTHON` (explicit python interpreter for the PS scripts)
-- `BOT_SECRETS_DIR` / `SYNC_DRIVE_PATH` (secrets/settings backup folder)
+1. **Never paste full file contents into chat.** Use `Read` and reference the path.
+2. **Use subagents for anything >1 file or >3 grep-passes.**
+3. **Match the agent to the task** — the agent descriptions encode the rules.
+4. **Append to the journal aggressively** — entries are 1-line and replace
+   re-explaining context next session.

@@ -61,7 +61,7 @@ WEEKLY_STAMP = TIMELINES_DIR / ".last_weekly_distill"
 
 PYTHON = sys.executable or "python"
 TIMELINE_PY = Path(__file__).resolve().parent / "timeline.py"
-WEEKLY_GATE_H = float(os.environ.get("BOT_V2_WEEKLY_GATE_H", "6"))
+WEEKLY_GATE_H = float(os.environ.get("BOT_WEEKLY_GATE_H", "6"))
 
 
 def _now() -> datetime:
@@ -202,7 +202,7 @@ Usage:
   precompact_timeline.py --session <id> --dry-run preview plan (spawns nothing)
 
 Env:
-  BOT_V2_WEEKLY_GATE_H   min hours between weekly distills (default 6)
+  BOT_WEEKLY_GATE_H   min hours between weekly distills (default 6)
 """
 
 

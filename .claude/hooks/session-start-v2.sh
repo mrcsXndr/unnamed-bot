@@ -1,33 +1,33 @@
 #!/usr/bin/env bash
 # SessionStart hook (v2)
 # - Injects last-session context + git log
-# - Ensures memory/sessions/<session_id>/journal.md exists, refreshes the
-#   cross-session recall index, and loads journal + timeline into the SYSTEM
-#   prompt (NOT chat history) via additionalContext.
-# STRICTLY FAIL-OPEN: every step is guarded; the hook always exits 0.
+# - Ensures memory/sessions/<session_id>/journal.md exists and loads
+#   journal + timeline into the system prompt (NOT chat history) via
+#   additionalContext.
+# - Refreshes the cross-session recall index, emits a memory-budget header,
+#   and surfaces due commitments.
+#
+# STRICTLY FAIL-OPEN: every step swallows its own errors; this hook must
+# never break session start.
 
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 0
 REPO="$PWD"
 
-# Resolve a python interpreter from PATH (override with $PYTHON or $BOT_PYTHON).
-PY="${PYTHON:-${BOT_PYTHON:-}}"
-if [ -z "$PY" ]; then
-  PY="$(command -v python || command -v python3 || echo python)"
-fi
+PY="${PYTHON:-python}"
 export PYTHONIOENCODING=utf-8
 
 # Invalidate statusline cost cache so it recalculates this session
 rm -f "$HOME/.claude/api_cost_cache.json" 2>/dev/null
 
-# Optional: pull latest settings from a sync folder on session start
-if [ -n "${BOT_SECRETS_DIR:-${SYNC_DRIVE_PATH:-}}" ]; then
-  bash "$REPO/tools/sync_settings.sh" pull 2>/dev/null || true
+# Optional: pull secrets/settings from a sync folder (opt-in via .env)
+if grep -qsE '^FEATURE_SECRETS_BACKUP=1' "$REPO/.env" 2>/dev/null; then
+  bash "$REPO/tools/infra/sync_settings.sh" pull >/dev/null 2>&1 || true
 fi
 
-# --- Cross-session recall index ------------------------------------------
-# Refresh the FTS5 recall index so the assistant can do zero-LLM cross-session
-# recall this session. Incremental + mtime-gated (~ms). FAIL-OPEN.
+# --- Cross-session recall index -------------------------------------------
+# Refresh the FTS5 recall index so the Director can do zero-LLM cross-session
+# recall this session. Incremental + mtime-gated (~ms).
 ( "$PY" "$REPO/tools/v2/recall.py" index >/dev/null 2>&1 ) || true
 
 # Read session id from Claude Code stdin payload (JSON: {"session_id":"..."})
@@ -49,11 +49,11 @@ fi
 JOURNAL_PATH="$REPO/memory/sessions/$SESSION_ID/journal.md"
 TIMELINE_PATH="$REPO/memory/sessions/$SESSION_ID/timeline.md"
 
-# --- Last-session context ------------------------------------------------
+# --- Last-session context ----------------------------------------------------
 # Prefer the most recent non-stub timeline.md (distilled narrative), else the
-# tail of the most recent journal.md with real entries, else omit. FAIL-OPEN.
+# tail of the most recent journal.md that has real entries, else omit.
 LAST_SESSION=$("$PY" - "$REPO" <<'PYEOF' 2>/dev/null || true
-import sys
+import os, sys
 from pathlib import Path
 
 repo = Path(sys.argv[1])
@@ -68,11 +68,13 @@ def newest_first(glob):
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
 
 def timeline_payload(p):
+    """Return distilled timeline text if it has a real body (skip stubs)."""
     try:
         txt = p.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
     body = txt
+    # strip YAML front-matter
     if body.startswith("---"):
         end = body.find("\n---", 3)
         if end != -1:
@@ -84,9 +86,11 @@ def timeline_payload(p):
     )
     if not has_content:
         return None
+    # cap to keep startup context tight
     return body.strip()[:4000]
 
 def journal_payload(p):
+    """Tail of a journal that has real `- [HH:MM:SS] ...` entries."""
     try:
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -96,40 +100,49 @@ def journal_payload(p):
     bullets = [ln for ln in lines if entry.match(ln.strip()) and entry.match(ln.strip()).group(1).strip() not in PLACEHOLDERS]
     if not bullets:
         return None
-    return "\n".join(bullets[-15:])[:4000]
+    tail = bullets[-15:]
+    return "\n".join(tail)[:4000]
 
+# 1. newest non-stub timeline
 for p in newest_first("*/timeline.md"):
     pl = timeline_payload(p)
     if pl:
         print(f"(from {p.parent.name}/timeline.md)\n{pl}")
         sys.exit(0)
 
+# 2. newest journal with real entries
 for p in newest_first("*/journal.md"):
     pl = journal_payload(p)
     if pl:
-        print(f"(recent journal entries - {p.parent.name})\n{pl}")
+        print(f"(recent journal entries — {p.parent.name})\n{pl}")
         sys.exit(0)
+
+# 3. nothing -> empty (block omitted by the hook)
 PYEOF
 )
 GIT_LOG=$(git log --oneline -5 2>/dev/null || echo "")
 
 JOURNAL_BODY=""
 if [ -f "$JOURNAL_PATH" ]; then
-  # Cap journal load (~20K chars / ~5K tokens) so a long session's journal
-  # doesn't bloat startup context. Full journal is always on disk if needed.
-  JOURNAL_BODY=$(tail -c "${BOT_V2_JOURNAL_HEAD_BYTES:-20000}" "$JOURNAL_PATH" 2>/dev/null || true)
+  # Cap journal load at last ~20K chars (~5K tokens) so a long-running
+  # session's journal doesn't bloat startup context. Full journal is
+  # always available on disk if the Director needs to Read it.
+  JOURNAL_BODY=$(tail -c "${BOT_JOURNAL_HEAD_BYTES:-20000}" "$JOURNAL_PATH" 2>/dev/null || true)
 fi
 TIMELINE_BODY=""
 if [ -f "$TIMELINE_PATH" ]; then
   TIMELINE_BODY=$(cat "$TIMELINE_PATH")
 fi
 
-# --- Sanitize external-derived memory before injection (block-on-poison) ---
-# journal / timeline / last-session can contain pasted content = a prompt-
-# injection persistence vector. Pass each chunk through tools/v2/sanitize_chunk.py
-# (thin gate over tools/sanitize.py): HIGH/CRITICAL risk -> [BLOCKED ...] marker;
-# otherwise the cleaned chunk is injected. FAIL-OPEN: raw chunk if sanitize fails.
+# --- Sanitize external-derived memory before injection -----------------------
+# journal / timeline / last-session can contain pasted TG/web content = a
+# prompt-injection persistence vector. Pass each chunk through
+# tools/v2/sanitize_chunk.py (gate over tools/infra/sanitize.py):
+# HIGH/CRITICAL risk -> replaced with a [BLOCKED ...] marker; otherwise the
+# cleaned chunk is injected instead of the raw text. FAIL-OPEN: prints the raw
+# chunk if sanitize can't run, so this can never break session start.
 sanitize_chunk() {
+  # $1 = source label. Reads chunk on stdin, prints cleaned/blocked on stdout.
   "$PY" "$REPO/tools/v2/sanitize_chunk.py" "$1" 2>/dev/null || cat
 }
 if [ -n "$LAST_SESSION" ]; then
@@ -142,12 +155,13 @@ if [ -n "$TIMELINE_BODY" ]; then
   TIMELINE_BODY=$(printf '%s' "$TIMELINE_BODY" | sanitize_chunk "$TIMELINE_PATH" || printf '%s' "$TIMELINE_BODY")
 fi
 
-# --- Memory budget header ------------------------------------------------
-# Frozen-snapshot usage header so the assistant SEES how full the durable index
-# (MEMORY.md) and this session's journal are, and self-consolidates before bloat.
+# --- Memory budget header ----------------------------------------------------
+# Frozen-snapshot usage header so the Director SEES how full the durable
+# index (memory/MEMORY.md) and this session's journal are, and self-
+# consolidates before they bloat. Budgets are chars.
 MEMORY_FILE="$REPO/memory/MEMORY.md"
 MEMORY_BUDGET=20000
-JOURNAL_BUDGET="${BOT_V2_JOURNAL_HEAD_BYTES:-20000}"
+JOURNAL_BUDGET="${BOT_JOURNAL_HEAD_BYTES:-20000}"
 BUDGET_HEADER=$("$PY" - "$MEMORY_FILE" "$MEMORY_BUDGET" "$JOURNAL_PATH" "$JOURNAL_BUDGET" <<'PYEOF' 2>/dev/null || true
 import os, sys
 def line(label, path, budget):
@@ -156,8 +170,8 @@ def line(label, path, budget):
     except OSError:
         return None
     pct = round(100 * n / budget) if budget else 0
-    flag = " OVER-BUDGET - consolidate" if n > budget else ""
-    return f"[{label}: {pct}% - {n:,}/{budget:,} chars{flag}]"
+    flag = " OVER-BUDGET — consolidate" if n > budget else ""
+    return f"[{label}: {pct}% — {n:,}/{budget:,} chars{flag}]"
 out = []
 for label, path, budget in (
     ("memory", sys.argv[1], int(sys.argv[2])),
@@ -170,6 +184,12 @@ print("\n".join(out))
 PYEOF
 )
 
+# --- Due commitments -----------------------------------------------------
+# Surface OPEN, due/overdue follow-ups from the session-independent store so
+# they resurface automatically instead of waiting on the operator to re-ask.
+# `surface` prints nothing (exit 0) when there's nothing due.
+COMMITMENTS=$("$PY" "$REPO/tools/v2/commitments.py" surface 2>/dev/null || true)
+
 CONTEXT=""
 if [ -n "$LAST_SESSION" ]; then
   CONTEXT="Last session:\n$LAST_SESSION"
@@ -181,12 +201,15 @@ CONTEXT="$CONTEXT\n\n## v2 Context Channels\nSession ID: $SESSION_ID\nJournal: $
 if [ -n "$BUDGET_HEADER" ]; then
   CONTEXT="$CONTEXT\n\n### Memory budget (frozen snapshot at session start)\n$BUDGET_HEADER"
 fi
-CONTEXT="$CONTEXT\n\nCross-session recall: run \`python tools/v2/recall.py search \"<query>\"\` for zero-LLM FTS5 recall across ALL past session journals."
+CONTEXT="$CONTEXT\n\nCross-session recall: run \`python tools/v2/recall.py search \"<query>\"\` for zero-LLM FTS5 recall across ALL past session journals (no need to re-read them)."
 if [ -n "$JOURNAL_BODY" ]; then
-  CONTEXT="$CONTEXT\n\n### Journal (working memory)\n$JOURNAL_BODY"
+  CONTEXT="$CONTEXT\n\n### Director's Journal (working memory)\n$JOURNAL_BODY"
 fi
 if [ -n "$TIMELINE_BODY" ]; then
   CONTEXT="$CONTEXT\n\n### Timeline (distilled narrative)\n$TIMELINE_BODY"
+fi
+if [ -n "$COMMITMENTS" ]; then
+  CONTEXT="$CONTEXT\n\n## Due commitments\n$COMMITMENTS"
 fi
 
 if [ -n "$CONTEXT" ]; then

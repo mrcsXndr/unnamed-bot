@@ -11,8 +11,8 @@ Run before a recurring standup (daily, three-weekly, whatever cadence applies). 
 ## Steps
 
 1. **Previous meeting notes** — Look for the most recent meeting recap, in whichever store you keep them:
-   - Google Drive folder of meeting notes — `bash tools/drive.sh search "meeting notes"`
-   - Email digests — `bash tools/gmail.sh search "standup notes"`
+   - Google Drive folder of meeting notes — `bash tools/google/drive.sh search "meeting notes"`
+   - Email digests — `bash tools/google/gmail.sh search "standup notes"`
    - A team Notion / Google Doc — fetch via the relevant tool / MCP
    - Extract: key decisions, action items + owners, unresolved topics carried forward.
 
@@ -23,7 +23,7 @@ Run before a recurring standup (daily, three-weekly, whatever cadence applies). 
    - For each ticket carried over from last standup, note current state
 
 3. **Backlog / TDL cross-reference** — if the team maintains a checklist sheet or document:
-   - `bash tools/sheets.sh read <spreadsheet-id> <range>` (configure the IDs in `context/`)
+   - `bash tools/google/sheets.sh read <spreadsheet-id> <range>` (configure the IDs in `context/`)
    - Flag status changes since last standup
    - Highlight blocker items still not started
 

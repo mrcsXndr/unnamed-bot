@@ -10,48 +10,37 @@ logs/
 .DS_Store
 
 # Generated runtime state (not meant for git)
-.context_state.json
-.context_warn_tg_lock
 MEMORY_SYNC_CONFLICT.md
 screenshots/*
 !screenshots/.gitkeep
-tools/__pycache__/
 __pycache__/
 *.pyc
+
+# v2 runtime state (session-local; regenerated)
+.claude/.current_session_id
+.claude/.bot_state.json
+.claude/.bot_fresh_restart
+.claude/.bot_update_stamp
+.claude/.tg_owner.lock
+.claude/.monitor_ticks.json
+.claude/stash/
+memory/index/
+memory/commitments.json
+memory/*.lock
+memory/**/*.lock
+tools/infra/.resource_monitor_state.json
+scripts/supervisor-hidden.vbs
 
 # Done-sound binaries (optional, user-supplied)
 .claude/hooks/sounds/done.*
 
-# v2 runtime state + markers (machine-specific, regenerated on launch)
-.claude/.current_session_id
-.claude/.bot_v2_state.json
-.claude/.tg_owner.lock
-.claude/.bot_fresh_restart
-.claude/.bot_v2_update_stamp
-.claude/stash/
-scripts/bot-supervisor-hidden.vbs
-
-# v2 ephemeral per-session working memory (only keep the index/structure)
+# Generated per-session working memory + metrics. The template ships DATA-FREE:
+# the scaffold (MEMORY.md, personality.md, READMEs, .gitkeep dirs) is tracked so
+# a fresh clone has structure, but YOUR sessions/metrics/logs stay local. If you
+# want cross-machine memory sync (like the reference bots), remove these lines.
 memory/sessions/*/
-!memory/sessions/.gitkeep
-# v2 per-session snapshots written by session_summarize.py (rebuildable)
-memory/sessions/*.md
-# v2 ephemeral per-project git-state snapshots from state_track.py
-memory/projects/*/
-!memory/projects/.gitkeep
-# v2 rebuildable FTS5 recall index (regenerate with `recall.py index`)
-memory/index/*
-!memory/index/.gitkeep
-# v2 promoted long-term salvage + weekly timelines + metrics (machine-local)
-memory/longterm/*
-!memory/longterm/.gitkeep
-memory/timelines/*
-!memory/timelines/.gitkeep
-memory/metrics/*
-!memory/metrics/.gitkeep
-# safe_write lock/backup sidecars
-*.lock
-*.bak.*
-
-# NOTE: memory/ is otherwise tracked so notes sync across machines.
-# Keep secrets OUT of memory/.
+memory/timelines/
+memory/metrics/*.csv
+memory/metrics/*.log
+!memory/sessions/README.md
+!memory/**/.gitkeep

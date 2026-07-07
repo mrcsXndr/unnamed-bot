@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """/update — update Claude Code, and (only if a new version landed) self-restart
-the bot session to apply it.
+the the bot session to apply it.
 
 WHY a self-restart dance: the running claude binary is already loaded into
 memory, so `claude update` only takes effect on the NEXT launch. And the bot does
@@ -15,7 +15,7 @@ conversation -> state races + double Telegram replies. So the safe sequence is:
          - spawn scripts/restart-bot.ps1 DETACHED, passing the LIVE claude PID
          - terminate the live claude process
        restart-bot.ps1 then polls until that PID is gone and launches a fresh
-       bot window (which --continue-resumes the now-single conversation).
+       the bot window (which --continue-resumes the now-single conversation).
     4. IF already current: report "already on vX", do NOT restart.
 
 Modes:
@@ -37,7 +37,7 @@ Exit codes:
 
 # --auto autonomous gate (IMPLEMENTED below; NOT auto-wired to any hook/timer).
 # The full flow fires only when ALL THREE gates pass:
-#   (a) NOT-CHECKED-TODAY  — daily stamp ~/.claude/.bot_v2_update_stamp (written by
+#   (a) NOT-CHECKED-TODAY  — daily stamp ~/.claude/.bot_update_stamp (written by
 #       launch.ps1 on launch). If it already reads today's date, skip:
 #       launch already ran a check today.
 #   (b) UPDATE-AVAILABLE   — `claude update` changed the version (ver_before !=
@@ -140,7 +140,7 @@ def _live_claude_pid() -> int | None:
 
 def _old_shell_pid(claude_pid: int) -> int | None:
     """Resolve the launcher SHELL pid = parent of the live claude.exe, but ONLY
-    if that parent is powershell.exe / pwsh.exe (the bot launcher shell = the
+    if that parent is powershell.exe / pwsh.exe (the the bot launcher shell = the
     window). The verified launch chain is:
         windowsterminal.exe -> powershell.exe (launcher) -> claude.exe -> children
     Killing this shell closes the OLD window after restart. Returns None if the
@@ -162,7 +162,7 @@ def _old_shell_pid(claude_pid: int) -> int | None:
 def _send_tg(text: str) -> None:
     try:
         subprocess.run(
-            [sys.executable or "python", str(REPO_ROOT / "tools" / "tg_send.py"),
+            [sys.executable or "python", str(REPO_ROOT / "tools" / "tg" / "tg_send.py"),
              "--quiet", "--no-status", text],
             capture_output=True, text=True, timeout=15, encoding="utf-8",
         )
@@ -224,7 +224,7 @@ def _terminate_pid(pid: int) -> None:
 
 import datetime  # noqa: E402  (local to the gate code)
 
-STAMP_FILE = Path(os.environ.get("USERPROFILE", "")) / ".claude" / ".bot_v2_update_stamp"
+STAMP_FILE = Path(os.environ.get("USERPROFILE", "")) / ".claude" / ".bot_update_stamp"
 IDLE_MIN = float(os.environ.get("BOT_IDLE_MIN", "5"))
 
 
@@ -324,7 +324,7 @@ def run_auto(dry_run: bool, exe: str) -> int:
         return 0
     if old_pid is None:
         msg = (f"/update(auto): updated {ver_before} -> {ver_after}, but could NOT resolve "
-               f"the live claude PID. NOT auto-restarting — run `mybot` manually.")
+               f"the live claude PID. NOT auto-restarting — run `the bot` manually.")
         print(msg)
         _send_tg(msg)
         return 2
@@ -338,7 +338,7 @@ def run_auto(dry_run: bool, exe: str) -> int:
 def run_restart_only(dry_run: bool) -> int:
     """SMOKE TEST entrypoint: exercise ONLY the self-restart dance — no update.
     Proves that the live window can relaunch itself (spawn detached
-    restart-bot.ps1, which waits for our PID to exit then `mybot -Continue`s).
+    restart-bot.ps1, which waits for our PID to exit then relaunches via launch.ps1 -Continue).
     --dry-run logs the would-do and spawns restart-bot in -DryRun (no kill)."""
     old_pid = _live_claude_pid()
     if old_pid is None:
@@ -444,7 +444,7 @@ def main(argv: list[str]) -> int:
     if old_pid is None:
         # Can't safely restart without knowing which claude to kill/wait-on.
         msg = (f"/update: updated {ver_before} -> {ver_after}, but could NOT resolve "
-               f"the live claude PID. NOT auto-restarting — run `mybot` manually to apply.")
+               f"the live claude PID. NOT auto-restarting — run `the bot` manually to apply.")
         print(msg)
         _send_tg(msg)
         return 2

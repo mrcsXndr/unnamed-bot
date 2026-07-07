@@ -6,5 +6,5 @@ Steps:
 3. **Scan for overnight items** — Quick email/Slack/GitLab check
 4. **Update context docs** — If anything significant changed
 5. **Prep for tomorrow** — Check calendar, flag meetings needing prep
-6. **Sync settings** — Run `bash tools/sync_settings.sh push`
+6. **Sync settings** — Run `bash tools/infra/sync_settings.sh push`
 7. **Report** — Concise summary: done, pending, tomorrow's schedule

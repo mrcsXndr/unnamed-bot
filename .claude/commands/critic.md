@@ -1,20 +1,17 @@
-# /critic — manual credibility pass on a subagent result
+# /critic — manual credibility-pass
 
-Use this slash command when:
-- You want to score a specific subagent result on demand
-- You want a credibility check on something you wrote yourself
-
-## What it does
-
-Invokes the `critic` subagent (Sonnet) to score the factual claims in a result
-against its original brief and any cited evidence.
+Use this slash command when you want a deliberate credibility check on a
+subagent result (or something you wrote yourself) before acting on it. The
+automatic per-subagent LLM scoring is intentionally not wired — the
+SubagentStop hook only writes a cheap zero-LLM envelope.
 
 ## Usage
 
 `/critic <path-to-result-file>` — scores the file's content against any cited
-evidence and writes a JSON to `memory/sessions/<id>/critic-<ts>.json`.
+evidence and writes a JSON envelope to `memory/sessions/<id>/critic-<ts>.json`.
 
-If no path is given, scores the most recent subagent result in the current session.
+If no path is given, score the most recent subagent result in the current
+session.
 
 ## Implementation
 

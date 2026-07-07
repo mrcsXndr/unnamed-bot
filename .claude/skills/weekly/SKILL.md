@@ -18,7 +18,7 @@ Run on Friday afternoon (or Sunday evening — whatever rhythm fits) to close th
 
 2. **Meeting recap** — summarise this week's standup / one-to-one / weekly meeting notes from wherever you save them (`meetings/dev/`, `meetings/mgmt/`, etc.).
 
-3. **Tracker reconciliation** — for each tracker the user keeps, list items currently in flight, blocked, or overdue. Use `python tools/state_track.py status <project>` if you've set that up.
+3. **Tracker reconciliation** — for each tracker the user keeps, list items currently in flight, blocked, or overdue (check `memory/` project notes and the commitments store: `python tools/v2/commitments.py list --open`).
 
 4. **Ask the user to fill in the gaps:**
    - Energy this week (1–5)

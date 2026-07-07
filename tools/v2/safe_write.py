@@ -43,7 +43,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-LOCK_TIMEOUT_S = float(os.environ.get("BOT_V2_LOCK_TIMEOUT", "10"))
+LOCK_TIMEOUT_S = float(os.environ.get("BOT_LOCK_TIMEOUT", "10"))
 LOCK_POLL_S = 0.05
 
 _IS_WIN = os.name == "nt"

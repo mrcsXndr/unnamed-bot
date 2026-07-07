@@ -8,8 +8,8 @@ Why
 ---
 There was zero per-session token/cost instrumentation. `statusline.js`
 only produces a lifetime EUR total pooled across ALL projects, so it
-cannot answer "what did THIS session cost" or compare one project to
-another. This script does, by parsing the same source data the statusline does:
+cannot answer "what did THIS session cost" or compare projects. This
+script does, by parsing the same source data the statusline does:
 
   ~/.claude/projects/<project-slug>/<session>.jsonl
 
@@ -50,15 +50,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 METRICS_DIR = REPO_ROOT / "memory" / "metrics"
 CSV_PATH = METRICS_DIR / "sessions.csv"
 
-# Default project slug for this repo. Claude Code derives the slug from the repo
-# path by replacing the drive colon and path separators with hyphens, e.g.
-# C:\Users\you\Code\my-bot -> C--Users-you-Code-my-bot. We compute it from
-# REPO_ROOT so it is correct on any machine; override with BOT_PROJECT_SLUG.
-def _derive_project_slug() -> str:
-    return str(REPO_ROOT).replace(":", "-").replace("\\", "-").replace("/", "-")
-
-
-DEFAULT_PROJECT_SLUG = os.environ.get("BOT_PROJECT_SLUG") or _derive_project_slug()
+# Default project slug for this repo. Claude Code derives it from the cwd by
+# replacing path separators + the drive colon with hyphens
+# (e.g. C:\Users\me\Code\my-bot -> C--Users-me-Code-my-bot), so compute it
+# from wherever this repo actually lives.
+DEFAULT_PROJECT_SLUG = str(REPO_ROOT).replace(":", "-").replace("\\", "-").replace("/", "-")
 
 CSV_HEADER = [
     "session_id",
@@ -190,7 +186,7 @@ def _model_mix(models: dict) -> str:
 
 def _upsert_row(row: list) -> None:
     """Upsert by session_id (row[0]). Exactly one current-total row per
-    session. The bot may run one long `--continue` session, so the Stop hook
+    session. the bot runs one long `--continue` session, so the Stop hook
     re-meters the same growing JSONL repeatedly — without upsert that would
     append a new cumulative row every Stop. We rewrite the CSV with the row
     replaced (or appended if new), via temp-file + os.replace so a crash

@@ -33,8 +33,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SESSIONS_DIR = REPO_ROOT / "memory" / "sessions"
 TIMELINES_DIR = REPO_ROOT / "memory" / "timelines"
 
-DISTILL_MODEL = os.environ.get("BOT_V2_DISTILL_MODEL", "claude-opus-4-8")
-DISTILL_TIMEOUT = int(os.environ.get("BOT_V2_DISTILL_TIMEOUT", "180"))
+DISTILL_MODEL = os.environ.get("BOT_DISTILL_MODEL", "claude-opus-4-8")
+DISTILL_TIMEOUT = int(os.environ.get("BOT_DISTILL_TIMEOUT", "180"))
 
 
 def _now_iso() -> str:
@@ -317,8 +317,8 @@ Usage:
   timeline.py distill <since>                   # cross-session, e.g. "2026-W18"
 
 Env:
-  BOT_V2_DISTILL_MODEL    (default: claude-opus-4-8)
-  BOT_V2_DISTILL_TIMEOUT  (default: 180s)
+  BOT_DISTILL_MODEL    (default: claude-opus-4-8)
+  BOT_DISTILL_TIMEOUT  (default: 180s)
 """
 
 

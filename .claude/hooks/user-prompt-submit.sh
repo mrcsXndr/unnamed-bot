@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook (v2)
 #
-# What it does:
+# What this hook does:
 #   1. Parse the Claude Code UserPromptSubmit JSON payload from stdin.
-#   2. INBOUND SIZE GUARD - if a single prompt is huge (paste / log dump / convo
-#      export), stash the raw blob and redirect attention instead of polluting
-#      context inline.
+#   2. TG SLASH-COMMAND INTERCEPT — /status /journal /timeline /compact /tasks
+#      /costs /update /help are handled by tools/v2/tg_commands.py and blocked
+#      from the main thread (exit 2). The reply goes straight back to Telegram.
+#   3. INBOUND SIZE GUARD — stash huge pastes and redirect Director attention
+#      instead of polluting context inline.
 #
-# Defensive: ANY error -> exit 0 (fail open - never silently drop a message).
+# Defensive: ANY error -> exit 0 (fail open — never silently drop a message).
 
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 0
 REPO="$PWD"
 
-PY="${PYTHON:-${BOT_PYTHON:-}}"
-if [ -z "$PY" ]; then
-  PY="$(command -v python || command -v python3 || echo python)"
-fi
+PY="${PYTHON:-python}"
 export PYTHONIOENCODING=utf-8
 
 PAYLOAD=""
@@ -54,13 +53,41 @@ fi
 # Restore literal newlines in PROMPT
 PROMPT_REAL=$(printf '%b' "$PROMPT")
 
+# --- TG SLASH-COMMAND INTERCEPT ---
+# If the prompt is a TG-style slash command, handle it directly and block the
+# main thread. tg_commands.py exit codes: 0=handled, 1=not-a-cmd,
+# 2=handled-with-error. Try to extract the inbound TG message_id for threading.
+REPLY_TO=$(printf '%s' "$PAYLOAD" | "$PY" -c "
+import json, re, sys
+try:
+    d = json.loads(sys.argv[1] or '{}')
+    p = d.get('prompt') or ''
+    m = re.search(r'message_id=\"(\d+)\"', p)
+    print(m.group(1) if m else '')
+except Exception:
+    print('')
+" "$PAYLOAD" 2>/dev/null || echo "")
+
+FIRST_CHAR="${PROMPT_REAL:0:1}"
+if [ "$FIRST_CHAR" = "/" ]; then
+  # Prompt goes via STDIN ('-'): on Windows/Git Bash, MSYS converts a
+  # leading-slash argv ("/help") into a Windows path, which would break the
+  # intercept. stdin is never path-converted.
+  CMD_RC=$(printf '%s' "$PROMPT_REAL" | "$PY" "$REPO/tools/v2/tg_commands.py" - "$REPLY_TO" >/dev/null 2>&1; echo $?)
+  if [ "$CMD_RC" = "0" ] || [ "$CMD_RC" = "2" ]; then
+    "$PY" "$REPO/tools/v2/journal.py" append "$SESSION_ID" action "tg-command handled: ${PROMPT_REAL:0:80}" >/dev/null 2>&1 || true
+    echo "[tg_commands] handled $PROMPT_REAL — reply sent to TG, blocking main thread" >&2
+    exit 2
+  fi
+fi
+
 # --- INBOUND SIZE GUARD ---
 # If a single prompt is huge (paste / log dump / convo export), don't let it
-# silently pollute context. Stash the raw blob and inject a directive telling
-# the assistant to Read or dispatch instead of reasoning over the whole thing
-# inline. Threshold: 50K chars (~12K tokens).
+# silently pollute Director context. Stash the raw blob and inject a strong
+# directive telling the Director to Read or dispatch instead of reasoning over
+# the whole thing inline. Threshold: 50K chars (~12K tokens).
 PROMPT_SIZE=${#PROMPT_REAL}
-SIZE_THRESHOLD=${BOT_V2_SIZE_THRESHOLD:-50000}
+SIZE_THRESHOLD=${BOT_SIZE_THRESHOLD:-50000}
 if [ "$PROMPT_SIZE" -gt "$SIZE_THRESHOLD" ]; then
   STASH_DIR="$REPO/.claude/stash"
   mkdir -p "$STASH_DIR" 2>/dev/null || true
@@ -86,5 +113,5 @@ EOF
   printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' "$ESCAPED"
 fi
 
-# Default: pass through to the main thread (exit 0).
+# Default: pass through to main thread (exit 0).
 exit 0

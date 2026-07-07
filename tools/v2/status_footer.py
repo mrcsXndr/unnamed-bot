@@ -9,7 +9,7 @@ Pulls:
   - tg channel health (from ~/.claude/channels/telegram/bot.pid)
 
 Output format (one line):
-  📍 my-bot (main*) · sess 20260509-... · ctx 287K/1M (29%) · TG🟢
+  📍 my-bot (main*) · sess 20260509-... · ctx 287K/500K (57%) · TG🟢
 
 CLI
 ---
@@ -30,10 +30,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 HOME = Path(os.path.expanduser("~"))
 
 # Practical context ceiling before Claude Code auto-compacts. The model window
-# is 1M, but compaction fires well before that — the footer % should reflect the
-# real headroom, so the denominator is the compaction limit, not the raw window.
-# Override with BOT_V2_MAX_CONTEXT if your compaction window differs.
-MAX_CONTEXT = int(os.environ.get("BOT_V2_MAX_CONTEXT", "500000"))
+# is 1M, but compaction fires well before that — the operator wants the TG footer % to
+# reflect the real headroom (TG #5286), so the denominator is the compaction
+# limit, not the raw window.
+MAX_CONTEXT = 500_000
 
 
 def _git_status() -> str:
@@ -81,10 +81,10 @@ def _project_hash_dir() -> Path | None:
     base = HOME / ".claude" / "projects"
     if not base.is_dir():
         return None
-    # Claude Code encodes path separators + drive colon as hyphens, e.g.
-    # `C:\Users\you\Code\my-bot` → `C--Users-you-Code-my-bot`.
-    # NOTE: replace `:` with `-` (not ""), or you get a single-hyphen variant that
-    # never matches the double-hyphen dir name — context would always read 0%.
+    # Claude Code encodes path separators + drive colon as hyphens:
+    # `C:\Users\me\Code\my-bot` → `C--Users-me-Code-my-bot`.
+    # Earlier this replaced `:` with empty string, which produced a single-hyphen
+    # variant that never matched the double-hyphen dir name — context always 0%.
     cwd_str = str(REPO_ROOT).replace(":", "-").replace("\\", "-").replace("/", "-")
     for d in base.iterdir():
         if d.is_dir() and cwd_str.lower().lstrip("-") in d.name.lower():

@@ -1,20 +1,11 @@
 #!/usr/bin/env bash
-# Sync secrets & settings between machines via a cloud/USB backup folder.
+# Sync secrets & settings between machines via Google Drive
 # Usage: bash tools/sync_settings.sh push|pull|status
-#
-# Configure the backup folder with EITHER env var (BOT_SECRETS_DIR takes
-# precedence):
-#   BOT_SECRETS_DIR  — your secrets/backup directory
-#                      (default suggestion: "$USERPROFILE/AssistantBot-secrets")
-#   SYNC_DRIVE_PATH  — legacy/alias for the same thing
-#
-# pull is wrapped in per-file timeouts so a cloud-only (offline-until-accessed)
-# Drive file can't stall the whole sync.
 
 set -euo pipefail
 
-DRIVE_DIR="${BOT_SECRETS_DIR:-${SYNC_DRIVE_PATH:-}}"
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+DRIVE_DIR="${SYNC_DRIVE_PATH:-}"
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 HOME_DIR="$HOME"
 
 # Files to sync
@@ -46,21 +37,21 @@ err()  { echo -e "${RED}[sync]${NC} $*" >&2; }
 
 check_drive() {
   if [ -z "$DRIVE_DIR" ]; then
-    err "No backup folder configured (set BOT_SECRETS_DIR or SYNC_DRIVE_PATH)."
-    err "Point it at your secrets/backup folder, e.g.:"
-    err "  export BOT_SECRETS_DIR=\"\$USERPROFILE/AssistantBot-secrets\""
-    err "Or add it to your .env file: BOT_SECRETS_DIR=..."
+    err "SYNC_DRIVE_PATH is not set."
+    err "Set it to your Google Drive backup folder, e.g.:"
+    err "  export SYNC_DRIVE_PATH=\"/path/to/Google Drive/Backup/bot-secrets\""
+    err "Or add it to your .env file: SYNC_DRIVE_PATH=..."
     exit 1
   fi
   if [ ! -d "$DRIVE_DIR" ]; then
-    err "Backup dir missing or not mounted: $DRIVE_DIR"
+    err "Google Drive not mounted or backup dir missing: $DRIVE_DIR"
     err "Create it: mkdir -p \"$DRIVE_DIR\""
     exit 1
   fi
 }
 
 do_push() {
-  log "Pushing settings to backup folder..."
+  log "Pushing settings to Google Drive..."
   local count=0
   for f in "${PROJECT_FILES[@]}"; do
     src="$PROJECT_DIR/$f"; dst="$DRIVE_DIR/$f"
@@ -94,43 +85,27 @@ do_push() {
     fi
   done
   [ "$mem_found" -eq 0 ] && warn "  skip memory (no .claude/projects/*/memory/ found)"
-  log "Pushed $count items to backup."
+  log "Pushed $count items to Drive."
 }
 
 do_pull() {
-  log "Pulling settings from backup folder..."
+  log "Pulling settings from Google Drive..."
   local count=0
-
-  # Wrap cp in a timeout so cloud-only files (offline until accessed) can't stall
-  # the sync. Skip byte-identical files to avoid perturbing mtimes.
-  safe_copy() {
-    local src="$1" dst="$2" label="$3"
-    if [ -f "$dst" ] && cmp -s "$src" "$dst" 2>/dev/null; then
-      log "  $label (unchanged)"; return 0
-    fi
-    if timeout 15 cp "$src" "$dst" 2>/dev/null; then
-      log "  $label"; return 0
-    else
-      warn "  $label TIMED OUT (cloud-only file — open it in Explorer / Finder, keep it on this device, then retry)"
-      return 1
-    fi
-  }
-
   for f in "${PROJECT_FILES[@]}"; do
     src="$DRIVE_DIR/$f"; dst="$PROJECT_DIR/$f"
-    if [ -f "$src" ]; then safe_copy "$src" "$dst" "$f" && count=$((count + 1))
+    if [ -f "$src" ]; then cp "$src" "$dst"; log "  $f"; count=$((count + 1))
     else warn "  skip $f (not in backup)"; fi
   done
   for entry in "${HOME_FILES[@]}"; do
     IFS=':' read -r home_rel drive_rel <<< "$entry"
     src="$DRIVE_DIR/$drive_rel"; dst="$HOME_DIR/$home_rel"
-    if [ -f "$src" ]; then mkdir -p "$(dirname "$dst")"; safe_copy "$src" "$dst" "$drive_rel -> ~/$home_rel" && count=$((count + 1))
+    if [ -f "$src" ]; then mkdir -p "$(dirname "$dst")"; cp "$src" "$dst"; log "  $drive_rel -> ~/$home_rel"; count=$((count + 1))
     else warn "  skip $drive_rel (not in backup)"; fi
   done
   for entry in "${CLAUDE_PROJECT_FILES[@]}"; do
     IFS=':' read -r proj_rel drive_rel <<< "$entry"
     src="$DRIVE_DIR/$drive_rel"; dst="$PROJECT_DIR/$proj_rel"
-    if [ -f "$src" ]; then mkdir -p "$(dirname "$dst")"; safe_copy "$src" "$dst" "$drive_rel -> $proj_rel" && count=$((count + 1))
+    if [ -f "$src" ]; then mkdir -p "$(dirname "$dst")"; cp "$src" "$dst"; log "  $drive_rel -> $proj_rel"; count=$((count + 1))
     else warn "  skip $drive_rel (not in backup)"; fi
   done
   # Sync Claude Code memories
@@ -153,11 +128,11 @@ do_pull() {
   else
     warn "  skip memory pull ($mem_drive not in backup)"
   fi
-  log "Pulled $count items from backup."
+  log "Pulled $count items from Drive."
 }
 
 do_status() {
-  log "Comparing local vs backup..."
+  log "Comparing local vs Drive backup..."
   local diffs=0
   for f in "${PROJECT_FILES[@]}"; do
     local_f="$PROJECT_DIR/$f"; drive_f="$DRIVE_DIR/$f"
@@ -179,7 +154,7 @@ case "${1:-help}" in
     echo "Usage: bash tools/sync_settings.sh <command>"
     echo "Commands: push | pull | status"
     echo ""
-    echo "Set BOT_SECRETS_DIR (or SYNC_DRIVE_PATH) to your backup folder"
-    echo "Example: export BOT_SECRETS_DIR=\"\$USERPROFILE/AssistantBot-secrets\""
+    echo "Set SYNC_DRIVE_PATH env var to your Google Drive backup folder"
+    echo "Example: export SYNC_DRIVE_PATH=\"/path/to/Google Drive/Backup/bot-secrets\""
     ;;
 esac

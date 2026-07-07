@@ -8,13 +8,13 @@
 - [personality.md](personality.md) — The bot's character and voice profile
 
 ## Feedback
-- [feedback/feedback_concise.md](feedback/feedback_concise.md) — Prefer terse, action-first replies (example)
-<!-- Preferences and corrections you give the bot accumulate here. -->
+<!-- Preferences and corrections you give the bot accumulate here, e.g.: -->
+<!-- - [feedback_concise.md](feedback_concise.md) — Prefer terse, action-first replies -->
 
 ## Projects
-- [projects/project_example.md](projects/project_example.md) — Example project note (replace with a real one)
-<!-- Durable facts about how each project works. -->
+<!-- Durable facts about how each project works, e.g.: -->
+<!-- - [project_acme.md](project_acme.md) — Deploy flow, repo layout, conventions -->
 
 ## Reference
-- [reference/reference_setup.md](reference/reference_setup.md) — Local setup notes (example)
-<!-- Reusable references (account names, setup quirks, conventions). -->
+<!-- Reusable references (account names, setup quirks, conventions), e.g.: -->
+<!-- - [reference_accounts.md](reference_accounts.md) — Which cloud accounts to use -->

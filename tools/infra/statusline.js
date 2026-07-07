@@ -1,4 +1,4 @@
-// the bot statusline — model, git, context %, lifetime API cost, TG health
+// the bot statusline — model, git, context %, lifetime API cost
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -65,12 +65,12 @@ function getCachedCost() {
 
 // TG channel health: green if the plugin's bot.pid process is alive, red otherwise.
 // Only shown for the instance that OWNS the TG poller: the launcher exports
-// BOT_V2_HAS_TG='1' when it acquired --channels, '0' when a foreign owner held
+// BOT_HAS_TG='1' when it acquired --channels, '0' when a foreign owner held
 // the slot (so this instance launched without --channels). '0' => hide the TG
-// indicator entirely (this instance doesn't have TG). Unset => unknown, keep
-// showing it (don't regress sessions launched before this gate).
+// indicator entirely (this instance doesn't have TG). Unset => legacy/unknown,
+// keep showing it (don't regress sessions launched before this gate).
 function tgStatus() {
-  if (process.env.BOT_V2_HAS_TG === '0') return '';
+  if (process.env.BOT_HAS_TG === '0') return '';
   try {
     const pidFile = path.join(os.homedir(), '.claude', 'channels', 'telegram', 'bot.pid');
     const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
@@ -101,10 +101,10 @@ process.stdin.on('end', () => {
     const pct = Math.round(j.context_window?.remaining_percentage || 0);
     const BAR = 10;
     const filled = Math.round(pct / 100 * BAR);
-    const bar = '[' + '█'.repeat(filled) + '░'.repeat(BAR - filled) + '] ' + pct + '%';
+    const bar = '[' + '\u2588'.repeat(filled) + '\u2591'.repeat(BAR - filled) + '] ' + pct + '%';
 
     const costEur = getCachedCost();
-    const costStr = costEur >= 1000 ? `€${(costEur/1000).toFixed(1)}k` : `€${costEur.toFixed(0)}`;
+    const costStr = costEur >= 1000 ? `\u20ac${(costEur/1000).toFixed(1)}k` : `\u20ac${costEur.toFixed(0)}`;
 
     console.log([m, dir + (g ? ' ' + g : ''), bar, costStr, tgStatus()].filter(Boolean).join(' | '));
   } catch (e) {
