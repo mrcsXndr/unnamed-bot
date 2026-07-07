@@ -18,7 +18,9 @@
 #      secrets backup. NOTHING GitHub- or backup-related is enabled unless
 #      you say yes. (The supervisor/watchdog scheduled tasks are Windows-only
 #      — run scripts\setup.ps1 there.)
-#   7. Runs the bundled self-check (scripts/smoke_test.sh) and prints the
+#   7. Sets up EASY LAUNCH: installs a one-word `bot` command into your shell
+#      profile (Desktop shortcuts are Windows-only — see create_shortcuts.ps1).
+#   8. Runs the bundled self-check (scripts/smoke_test.sh) and prints the
 #      exact launch command.
 #
 # Idempotent: safe to re-run any time; it updates .env in place.
@@ -147,7 +149,7 @@ say "=== Bot setup wizard ==="
 say ""
 
 # --- 1. dependencies (detect + offer to install what's missing) ---------------
-say "[1/7] Dependencies"
+say "[1/8] Dependencies"
 if [ "$SKIP_INSTALL" = "1" ]; then
   note "installer skipped (--skip-install)"
 else
@@ -190,7 +192,7 @@ fi
 
 # --- 2. .env -------------------------------------------------------------------
 say ""
-say "[2/7] Config file (.env)"
+say "[2/8] Config file (.env)"
 if [ ! -f .env ]; then
   if [ "$DRY_RUN" = "1" ]; then
     note "(dry-run) would copy .env.example -> .env"
@@ -204,7 +206,7 @@ fi
 
 # --- 3. required inputs ---------------------------------------------------------
 say ""
-say "[3/7] The three required inputs"
+say "[3/8] The three required inputs"
 BOT_NAME="$ARG_BOT_NAME"
 [ -n "$BOT_NAME" ] || ask BOT_NAME "What is your bot called?" "my-bot"
 set_env BOT_NAME "$BOT_NAME"
@@ -251,7 +253,7 @@ fi
 
 # --- 4. memory dirs + recall DB ---------------------------------------------------
 say ""
-say "[4/7] Memory + recall index"
+say "[4/8] Memory + recall index"
 if [ "$DRY_RUN" = "1" ]; then
   note "(dry-run) would create memory/sessions, memory/metrics, memory/index + recall DB"
 else
@@ -263,7 +265,7 @@ fi
 
 # --- 5. Telegram channel plugin -----------------------------------------------------
 say ""
-say "[5/7] Telegram channel"
+say "[5/8] Telegram channel"
 PREPAIRED=0
 if [ -n "${TOKEN:-}" ]; then
   # The official plugin reads its token from its own state .env. Write it
@@ -296,7 +298,7 @@ fi
 
 # --- 6. opt-in features ---------------------------------------------------------------
 say ""
-say "[6/7] Optional automations (all OFF unless you opt in)"
+say "[6/8] Optional automations (all OFF unless you opt in)"
 
 if ask_yn "Enable Google Workspace tools (calendar/gmail/tasks/sheets/drive)?"; then
   set_env FEATURE_GOOGLE 1
@@ -354,9 +356,20 @@ case "$(uname -s 2>/dev/null)" in
     ;;
 esac
 
-# --- 7. self-check + next step ---------------------------------------------------------
+# --- 7. easy launch: bot command ------------------------------------------------------
 say ""
-say "[7/7] Self-check"
+say "[7/8] Easy launch (so you never need the CLI)"
+if ask_yn_yes "Add a 'bot' command to your shell profile?"; then
+  ip_args=""; [ "$DRY_RUN" = "1" ] && ip_args="--dry-run"
+  bash "$REPO/scripts/install_profile.sh" $ip_args || note "profile install error"
+else
+  note "skipped. Add later with: bash scripts/install_profile.sh"
+fi
+note "(Desktop double-click shortcuts are Windows-only: scripts/create_shortcuts.ps1)"
+
+# --- 8. self-check + next step ---------------------------------------------------------
+say ""
+say "[8/8] Self-check"
 if [ "$DRY_RUN" = "1" ]; then
   note "(dry-run) would run scripts/smoke_test.sh"
 elif ask_yn_yes "Run the self-check now (verifies the harness, ~30s)?"; then
@@ -373,9 +386,10 @@ fi
 say ""
 say "=== Setup complete ==="
 say ""
-say "NEXT STEP — launch your bot with exactly this command:"
+say "NEXT STEP — start your bot any of these ways (easiest first):"
 say ""
-say "    bash scripts/launch.sh"
+say "    1. Type   bot   in a NEW terminal"
+say "    2. Or run:  bash scripts/launch.sh"
 say ""
 if [ -n "${TOKEN:-}" ]; then
   if [ "$PREPAIRED" = "1" ]; then

@@ -18,7 +18,10 @@
 #      secrets backup, resource monitors, and the Windows supervisor /
 #      TG-watchdog scheduled tasks. NOTHING GitHub-, backup-, or scheduled-
 #      task-related is enabled unless you say yes.
-#   7. Runs the bundled self-check (scripts\smoke_test.ps1) and prints the
+#   7. Sets up EASY LAUNCH: installs a one-word `bot` command into your
+#      PowerShell profile + creates Desktop/Start-Menu shortcuts (double-click
+#      to start — no CLI needed).
+#   8. Runs the bundled self-check (scripts\smoke_test.ps1) and prints the
 #      exact launch command.
 #
 # Idempotent: safe to re-run any time; it updates .env in place.
@@ -132,7 +135,7 @@ Say '=== Bot setup wizard ==='
 Say ''
 
 # --- 1. dependencies (detect + offer to install what's missing) ---------------
-Say '[1/7] Dependencies'
+Say '[1/8] Dependencies'
 if ($SkipInstall) {
     Note 'installer skipped (-SkipInstall)'
 } else {
@@ -169,7 +172,7 @@ if ($missing) {
 
 # --- 2. .env -------------------------------------------------------------------
 Say ''
-Say '[2/6] Config file (.env)'
+Say '[2/8] Config file (.env)'
 if (-not (Test-Path '.env')) {
     if ($DryRun) { Note '(dry-run) would copy .env.example -> .env' }
     else {
@@ -184,7 +187,7 @@ if (-not (Test-Path '.env')) {
 
 # --- 3. required inputs ---------------------------------------------------------
 Say ''
-Say '[3/7] The three required inputs'
+Say '[3/8] The three required inputs'
 if (-not $BotName) { $BotName = Ask 'What is your bot called?' 'my-bot' }
 Set-DotEnv 'BOT_NAME' $BotName
 
@@ -229,7 +232,7 @@ if ($TgToken) {
 
 # --- 4. memory dirs + recall DB ---------------------------------------------------
 Say ''
-Say '[4/7] Memory + recall index'
+Say '[4/8] Memory + recall index'
 if ($DryRun) {
     Note '(dry-run) would create memory/sessions, memory/metrics + recall DB'
 } else {
@@ -244,7 +247,7 @@ if ($DryRun) {
 
 # --- 5. Telegram channel plugin -----------------------------------------------------
 Say ''
-Say '[5/7] Telegram channel'
+Say '[5/8] Telegram channel'
 $prePaired = $false
 if ($TgToken) {
     $tgDir = "$env:USERPROFILE\.claude\channels\telegram"
@@ -281,7 +284,7 @@ if ($TgToken) {
 
 # --- 6. opt-in features ---------------------------------------------------------------
 Say ''
-Say '[6/7] Optional automations (all OFF unless you opt in)'
+Say '[6/8] Optional automations (all OFF unless you opt in)'
 
 if (AskYN 'Enable Google Workspace tools (calendar/gmail/tasks/sheets/drive)?') {
     Set-DotEnv 'FEATURE_GOOGLE' '1'
@@ -339,9 +342,29 @@ if (AskYN 'Install the supervisor scheduled task (at-logon + every 3 min)?') {
     }
 }
 
-# --- 7. self-check + next step ----------------------------------------------------------
+# --- 7. easy launch: profile command + desktop shortcuts ------------------------------
 Say ''
-Say '[7/7] Self-check'
+Say '[7/8] Easy launch (so you never need the CLI)'
+Note 'A one-word command + double-click shortcuts to start the bot.'
+if (AskYNYes 'Add a `bot` command to your PowerShell profile?') {
+    # HASHTABLE splat (not array): an array element '-DryRun' is bound as a
+    # POSITIONAL arg, not the switch — it would silently defeat -DryRun.
+    $ip = @{}; if ($DryRun) { $ip['DryRun'] = $true }
+    try { & (Join-Path $repo 'scripts\install_profile.ps1') @ip } catch { Note "profile install error: $($_.Exception.Message)" }
+} else {
+    Note 'skipped. Add later with: pwsh -File scripts\install_profile.ps1'
+}
+if (AskYNYes 'Create Desktop + Start Menu shortcuts (double-click to launch)?') {
+    $cs = @{}; if ($DryRun) { $cs['DryRun'] = $true }
+    if ($BotName) { $cs['BotName'] = $BotName }
+    try { & (Join-Path $repo 'scripts\create_shortcuts.ps1') @cs } catch { Note "shortcut error: $($_.Exception.Message)" }
+} else {
+    Note 'skipped. Create later with: pwsh -File scripts\create_shortcuts.ps1'
+}
+
+# --- 8. self-check + next step ----------------------------------------------------------
+Say ''
+Say '[8/8] Self-check'
 if ($DryRun) {
     Note '(dry-run) would run scripts\smoke_test.ps1'
 } elseif (AskYNYes 'Run the self-check now (verifies the harness, ~30s)?') {
@@ -359,9 +382,12 @@ if ($DryRun) {
 Say ''
 Say '=== Setup complete ==='
 Say ''
-Say 'NEXT STEP — launch your bot with exactly this command:'
+$startLabel = if ($BotName) { $BotName } else { 'your bot' }
+Say 'NEXT STEP — start your bot any of these ways (easiest first):'
 Say ''
-Say '    pwsh -File scripts\launch.ps1'
+Say "    1. Double-click the `"$startLabel`" shortcut on your Desktop"
+Say '    2. Type   bot   in a NEW PowerShell window'
+Say '    3. Or run:  pwsh -File scripts\launch.ps1'
 Say ''
 if ($TgToken) {
     if ($prePaired) {

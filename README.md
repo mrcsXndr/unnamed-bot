@@ -25,6 +25,13 @@ Setup asks for three things — **bot name, Telegram bot token, chat id**
 you just want a terminal bot). Everything else is a yes/no opt-in. Then
 message your bot, pair once with `/telegram:access pair <code>`, done.
 
+**Never want to touch a terminal again?** The wizard's *Easy launch* step (on
+by default) installs a one-word `bot` command into your shell profile **and**
+puts double-click **Desktop + Start-Menu shortcuts** on your machine — so
+starting the long-running conversation is just typing `bot` or double-clicking
+an icon. (Install them later by hand with `scripts\install_profile.ps1` and
+`scripts\create_shortcuts.ps1`.)
+
 Full walkthrough + troubleshooting: **[docs/SETUP.md](docs/SETUP.md)**.
 
 ## What makes this different from "claude in a terminal"
