@@ -67,6 +67,19 @@ heartbeat) instead of relying on the user to re-ask.
 **Cost meter:** every session appends a cost row to
 `memory/metrics/sessions.csv` (Stop hook). `/costs` on TG rolls it up.
 
+**Persistent TDL — the always-in-memory backlog (`memory/TDL.md`):** a SINGLE
+durable, HAND-MAINTAINED markdown doc listing every undone / blocked / deferred
+item, so nothing survives only in session context. Edit it directly with
+Write/Edit (no CLI, no schema) — each `###` item under `## Open` can carry as
+much detail as it needs (status tag, next step, blocker, links). Session-start
+injects its `## Open` section, and this CLAUDE.md points to it, so it is always
+in memory. The pattern: whenever a turn ends with work undone/blocked/deferred,
+add or update an item under `## Open`; drop a one-line Journal entry that names
+`memory/TDL.md` so the pointer survives compaction; on ship (tested + deployed +
+verified) move the item to `## Done` with a one-line outcome + date. Distinct
+from the Commitments store (due-dated pings): TDL.md is the plain-text "what's
+still open" backstop the Director reads first.
+
 ## Tiered subagents — pick the right tool for the work
 
 | Agent | Model (default) | When to fire |

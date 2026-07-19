@@ -113,11 +113,16 @@ if (-not $Force) {
     } catch {}
 }
 
-# --- optional: pull secrets/settings + repo (opt-in via .env flags) ----------
+# --- optional: back up secrets/settings + pull repo (opt-in via .env flags) ---
+# Back up secrets TO the backup folder — PUSH ONLY. An auto-PULL on every
+# launch can silently overwrite freshly-fixed local files with stale backup
+# copies (it re-imported a local config fix for days). The backup is a BACKUP,
+# not a source of truth: restore is manual/on-demand only (fresh-box DR or an
+# explicit "restore from backup"):  bash tools/infra/sync_settings.sh pull
 $gitBash = 'C:\Program Files\Git\bin\bash.exe'
 if ((Test-Feature 'FEATURE_SECRETS_BACKUP') -and (Test-Path "$repo\tools\infra\sync_settings.sh") -and (Test-Path $gitBash)) {
-    Write-Host "Syncing settings from backup folder..." -ForegroundColor DarkGray
-    & $gitBash "$repo\tools\infra\sync_settings.sh" pull 2>$null
+    Write-Host "Backing up settings to backup folder (push-only)..." -ForegroundColor DarkGray
+    & $gitBash "$repo\tools\infra\sync_settings.sh" push 2>$null
 }
 if (Test-Feature 'FEATURE_MEMORY_SYNC') {
     git pull --rebase --autostash 2>$null | Out-Null
@@ -282,7 +287,16 @@ try {
 # poller, so only the owner shows the TG health indicator.
 $env:BOT_HAS_TG = if ($channels) { '1' } else { '0' }
 
-$channelArgs = if ($channels) { @('--channels', $channels) } else { @() }
+# --channels + the TG plugin enablement are included ONLY when we own the
+# poller slot. Enablement rides in via --settings (tg-enable.settings.json)
+# instead of .claude/settings.json / settings.local.json: a settings-file
+# enablement is auto-loaded by EVERY claude launch in this repo cwd — plain
+# `claude`, headless --print spawns — each starting a bridge that STEALS the
+# poll slot. --channels alone does NOT load a disabled plugin, so enablement
+# must live in a file we pass explicitly, and only when we own the poller.
+$channelArgs = if ($channels) {
+    @('--channels', $channels, '--settings', "$repo\.claude\tg-enable.settings.json")
+} else { @() }
 
 if (-not $resume) {
     Write-Host "  Starting fresh — journal will be created by the session-start hook." -ForegroundColor Green

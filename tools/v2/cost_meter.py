@@ -81,7 +81,12 @@ def _tier(model: str | None) -> str:
 
 
 def _projects_dir() -> Path:
-    return Path(os.path.expanduser("~")) / ".claude" / "projects"
+    # Honor CLAUDE_CONFIG_DIR so per-personality bot instances (which set their
+    # own config home) price the right transcript, not the real ~/.claude.
+    # Falls back to ~/.claude when unset.
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    base = Path(cfg) if cfg else Path(os.path.expanduser("~")) / ".claude"
+    return base / "projects"
 
 
 def _find_jsonl(session_id: str, project_slug: str) -> Path | None:

@@ -1,0 +1,6 @@
+{
+  "_comment": "TG plugin enablement — passed EXPLICITLY by scripts/launch.ps1 via `claude --settings` and ONLY when the launcher owns the poller slot. This must NEVER live in .claude/settings.json or .claude/settings.local.json: any settings-file enablement is auto-loaded by EVERY claude launch in this repo (including plain `claude` and headless --print spawns), which starts a second bridge and steals the single getUpdates poll slot. No secrets here; tracked in git.",
+  "enabledPlugins": {
+    "telegram@claude-plugins-official": true
+  }
+}

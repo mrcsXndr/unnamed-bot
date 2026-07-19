@@ -49,6 +49,31 @@ TIMELINES_DIR = REPO_ROOT / "memory" / "timelines"
 INDEX_DIR = REPO_ROOT / "memory" / "index"
 DB_PATH = INDEX_DIR / "recall.db"
 
+
+def _sanitize_snippet(text: str) -> str:
+    """Sanitize a recalled journal/timeline snippet before it is returned to the
+    Director. Journals can carry pasted TG/web content = an injection-persistence
+    vector (a poisoned entry recalled next session becomes trusted context). Gate
+    HIGH/CRITICAL risk to a marker; otherwise return the cleaned text.
+
+    FAIL-OPEN: if sanitize can't run, return the raw text — recall must never break.
+    """
+    if not text or not text.strip():
+        return text
+    try:
+        sys.path.insert(0, str(REPO_ROOT / "tools" / "infra"))
+        import sanitize  # tools/infra/sanitize.py
+
+        findings = sanitize.scan(text)
+        risk = sanitize.get_risk_level(findings)
+        if risk in ("HIGH", "CRITICAL"):
+            return f"[BLOCKED: high-risk recalled content — risk={risk}, not shown, review manually]"
+        cleaned, _f, _r = sanitize.full_sanitize(text, source="recall", frame=False)
+        return cleaned
+    except Exception:
+        return text
+
+
 # Reverse of journal.py KINDS: section header -> kind key.
 SECTION_TO_KIND = {
     "Findings": "finding",
@@ -352,7 +377,7 @@ def _window(con: sqlite3.Connection, hit: sqlite3.Row, radius: int) -> list[dict
             "kind": r[1],
             "ts": r[2],
             "seq": r[3],
-            "text": r[4],
+            "text": _sanitize_snippet(r[4]),
             "is_match": r[0] == hit["id"],
         }
         for r in rows

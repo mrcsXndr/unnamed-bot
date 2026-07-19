@@ -106,35 +106,37 @@ def cmd_timeline(args: list[str], reply_to: str | None) -> int:
 
 
 def cmd_compact(args: list[str], reply_to: str | None) -> int:
-    """On-disk compaction-equivalent: distill journal → timeline + checkpoint."""
+    """On-disk compaction-equivalent: distill journal → timeline + checkpoint.
+
+    Runs DETACHED: this handler lives inside the UserPromptSubmit hook, which
+    settings.json time-boxes to 15s — but the LLM distill takes up to 180s.
+    Running it synchronously here got the hook killed mid-distill and the caller
+    saw "distilling…" then nothing. run_hidden.py spawns the whole chain
+    (distill → checkpoint → TG confirmation) windowless and fire-and-forget; the
+    confirmation message arrives when it finishes."""
     sess = _current_session()
     if not sess:
         return _send_tg("/compact: no active session id", reply_to)
 
-    _send_tg(f"/compact: distilling session {sess[-8:]}…", reply_to)
-
-    # 1. timeline distill (LLM via claude CLI)
-    try:
-        r = subprocess.run(
-            [PY_EXE, str(REPO_ROOT / "tools" / "v2" / "timeline.py"), "build", sess],
-            timeout=200, capture_output=True, text=True, encoding="utf-8",
-        )
-        timeline_status = (r.stdout or r.stderr or "").strip().splitlines()[-1] if (r.stdout or r.stderr) else "(no output)"
-    except Exception as e:
-        timeline_status = f"distill failed: {e}"
-
-    # 2. checkpoint journal entry
+    chain = (
+        f'"{PY_EXE}" "{REPO_ROOT / "tools" / "v2" / "timeline.py"}" build {sess}; '
+        f'"{PY_EXE}" "{REPO_ROOT / "tools" / "v2" / "journal.py"}" append {sess} '
+        f'decision "TG /compact: timeline distilled, checkpoint marker for next-session resumption"; '
+        f'"{PY_EXE}" "{REPO_ROOT / "tools" / "tg" / "tg_send.py"}" '
+        f'"/compact done — timeline distilled for {sess[-8:]}. Next session start loads it."'
+    )
     try:
         subprocess.run(
-            [PY_EXE, str(REPO_ROOT / "tools" / "v2" / "journal.py"), "append", sess,
-             "decision", "TG /compact: timeline distilled, checkpoint marker for next-session resumption"],
-            timeout=10, capture_output=True,
+            [PY_EXE, str(REPO_ROOT / "tools" / "v2" / "run_hidden.py"), "--",
+             "C:/Program Files/Git/bin/bash.exe", "-c", chain],
+            timeout=15, capture_output=True,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        return _send_tg(f"/compact: failed to spawn distill: {e}", reply_to)
 
     return _send_tg(
-        f"/compact done.\n```\n{timeline_status}\n```\nNext session start will load the fresh timeline.",
+        f"/compact: distilling session {sess[-8:]} in the background (~1-3 min) — "
+        "I'll confirm here when the timeline is fresh.",
         reply_to,
     )
 

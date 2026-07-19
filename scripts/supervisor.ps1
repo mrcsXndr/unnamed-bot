@@ -260,6 +260,31 @@ function Invoke-MonitorTick {
     }
 }
 
+function Test-SessionBusy {
+    # Is the live session ACTIVELY working? Signal = newest Claude Code TRANSCRIPT
+    # (.jsonl) mtime. CC writes the transcript on every message + tool call, so it
+    # tracks real activity continuously — unlike the journal, which the Director
+    # only writes sporadically (a stale journal on a mid-conversation session would
+    # FAIL to protect it). If ANY transcript was touched within $QuietMin minutes,
+    # the session is mid-work -> BUSY. MUST BE RECURSIVE: background subagents and
+    # workflows write to <session>/subagents/**/agent-*.jsonl while the MAIN
+    # transcript sits idle — a top-level-only check can read 'idle' and the restart
+    # then kills in-flight work. Killing a busy session throws away in-flight
+    # context. CONSERVATIVE: any error / no transcript -> BUSY (never nuke when
+    # unsure). Returns $true = busy (defer), $false = idle (safe).
+    param([int]$QuietMin = 5)
+    try {
+        $munged = ($repo -replace '[:\\/]', '-')
+        $projDir = Join-Path $env:USERPROFILE ".claude\projects\$munged"
+        if (-not (Test-Path $projDir)) { return $true }  # unsure -> busy
+        $newest = Get-ChildItem -Path $projDir -Filter '*.jsonl' -Recurse -ErrorAction SilentlyContinue |
+                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if (-not $newest) { return $true }               # unsure -> busy
+        $quietSince = (Get-Date) - $newest.LastWriteTime
+        return ($quietSince.TotalMinutes -lt $QuietMin)
+    } catch { return $true }                             # unsure -> busy
+}
+
 # --- single instance --------------------------------------------------------
 $mutex = New-Object System.Threading.Mutex($false, 'Global\ClaudeBotSupervisor')
 $haveMutex = $false
@@ -292,10 +317,14 @@ try {
     $poller = 'UNKNOWN'
     try {
         $env:PYTHONIOENCODING = 'utf-8'
-        $out = (& $pyExe $watchdog --probe-only 2>$null | Select-Object -First 1)
+        # Pass the resolved claude PID so the STOLEN holder-check can compare
+        # ancestry in the scheduled-task context (no claude ancestor to walk).
+        $wdArgs = @($watchdog, '--probe-only')
+        if ($claudePid -gt 0) { $wdArgs += @('--claude-pid', "$claudePid") }
+        $out = (& $pyExe @wdArgs 2>$null | Select-Object -First 1)
         if ($out) { $poller = $out.Trim() }
     } catch {}
-    if ($poller -notin @('ALIVE','DEAD','UNKNOWN')) { $poller = 'UNKNOWN' }
+    if ($poller -notin @('ALIVE','DEAD','UNKNOWN','STOLEN')) { $poller = 'UNKNOWN' }
 
     Write-SupLog "state: ownerPid=$ownerPid botAlive=$botAlive claudePid=$claudePid poller=$poller"
 
@@ -320,7 +349,11 @@ try {
     $action = 'none'
     if (-not $botAlive) {
         $action = 'cold-start'
-    } elseif ($poller -eq 'DEAD') {
+    } elseif ($poller -in @('DEAD','STOLEN')) {
+        # DEAD: poller permanently 409'd. STOLEN: slot held by a FOREIGN local
+        # process (another claude's auto-started bridge) — inbound is dead even
+        # though the 409 probe looks healthy; a restart reclaims the slot (the
+        # thief's plugin gives up after one 409). Same idle-gated restart path.
         $action = 'restart'
     }
 
@@ -331,6 +364,22 @@ try {
         # Healthy: run the hourly-gated monitors here (never on the restart/
         # cold-start paths, so monitor latency can't delay recovery).
         Invoke-MonitorTick -AsDryRun:$DryRun
+        # Secrets backup push: periodic (launch-only push goes stale on a
+        # long-running session). sync_settings.sh self-gates (BOT_PUSH_MIN_INTERVAL,
+        # default 6h) so this is a cheap no-op on most ticks. Push-only by design —
+        # pull is manual DR. Isolated, fail-open; healthy path only.
+        if (-not $DryRun) {
+            try {
+                $gitBash = 'C:\Program Files\Git\bin\bash.exe'
+                $syncSh  = Join-Path $repo 'tools\infra\sync_settings.sh'
+                if ((Test-Path $gitBash) -and (Test-Path $syncSh)) {
+                    $out = & $gitBash $syncSh push 2>&1 | Select-Object -Last 1
+                    if ($out -and "$out" -notmatch 'push skipped') {
+                        Write-SupLog "secrets-push: $out"
+                    }
+                }
+            } catch { Write-SupLog "secrets-push: swallowed (fail-open): $($_.Exception.Message)" }
+        }
         Write-SupLog "no action (botAlive=$botAlive poller=$poller)"; exit 0
     }
     if ($DryRun) { Write-SupLog "DRYRUN would $action (botAlive=$botAlive poller=$poller)"; exit 0 }
@@ -343,7 +392,48 @@ try {
     }
 
     if ($action -eq 'restart') {
-        Write-SupLog "ACTION=START kind=restart (poller DEAD, bot proc alive)"
+        # NEVER kill a live session that's actively working. The restart path
+        # kills claude to relaunch (to recover a dead/stolen poller) — but if the
+        # session is mid-task, that -Force kill throws away in-flight context.
+        # Idle-gate it: a BUSY session is DEFERRED + TG-alerted, not killed.
+        # Poller recovery waits until the session goes quiet (or the operator
+        # acts). Long-running context is load-bearing. Fail-open: unsure -> busy.
+        if (Test-SessionBusy) {
+            Write-SupLog "restart DEFERRED: poller $poller but session BUSY (transcript fresh) — not killing live work"
+            # TG-alert at most once per 2h (ticks are frequent; alerting each
+            # tick would spam). A stamp file gates it.
+            try {
+                $stamp = Join-Path $repo '.claude\.alert_poller_defer.ts'
+                $due = $true
+                if (Test-Path $stamp) {
+                    $last = [datetime]::MinValue
+                    if ([datetime]::TryParse((Get-Content $stamp -Raw -ErrorAction SilentlyContinue), [ref]$last)) {
+                        if (((Get-Date) - $last).TotalHours -lt 2) { $due = $false }
+                    }
+                }
+                if ($due) {
+                    $env:PYTHONIOENCODING = 'utf-8'
+                    $msg = "⚠️ TG poller $poller but your session is actively working — supervisor is NOT restarting (would lose context). Inbound is down; it auto-heals the moment the session goes idle."
+                    & $pyExe (Join-Path $repo 'tools\tg\tg_send.py') $msg 2>&1 | Out-Null
+                    # Stamp only after a ZERO-exit send — stamping first would
+                    # suppress the alert for 2h even when the send failed.
+                    if ($LASTEXITCODE -eq 0) {
+                        [System.IO.File]::WriteAllText($stamp, (Get-Date).ToString('o'))
+                    }
+                }
+            } catch {}
+            exit 0
+        }
+        if ($claudePid -le 0) {
+            # PID-0 footgun: restart-bot -OldPid 0 waits on the System Idle
+            # Process ("alive"), times out and refuses to relaunch — while we'd
+            # have already killed the owner shell below. Net result: bot down
+            # until a FRESH cold-start = context loss. Without a real claude PID,
+            # defer this tick; the CIM child query normally resolves it next tick.
+            Write-SupLog "restart DEFERRED: claudePid unresolved (0) — not spawning restart-bot with OldPid 0"
+            exit 0
+        }
+        Write-SupLog "ACTION=START kind=restart (poller $poller, bot proc alive, session idle -> --continue)"
         Write-BotState @{ started_by = 'supervisor-restart'; updated_at = (Get-Date).ToString('o'); status = 'restarting' }
         Start-BotViaRestart -OldPid $claudePid -OldShellPid $ownerPid
         # restart-bot waits for claudePid to exit; terminate it so it can relaunch.

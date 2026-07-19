@@ -81,4 +81,10 @@ mkdir -p "$SESSION_DIR" 2>/dev/null || true
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 printf '%s\n' "$CRITIC_JSON" > "$SESSION_DIR/critic-$TS.json"
 
+# Clean up the per-invocation temp files from the stdin-payload branch (only
+# set there; TMP_SESSION was already removed above). Leaking these filled the
+# temp dir one pair per subagent return.
+[ -n "${TMP_TASK:-}" ] && rm -f "$TMP_TASK" 2>/dev/null || true
+[ -n "${TMP_RESULT:-}" ] && rm -f "$TMP_RESULT" 2>/dev/null || true
+
 exit 0

@@ -23,20 +23,35 @@ if ! [ -t 0 ]; then
   PAYLOAD=$(cat || true)
 fi
 
-# Extract prompt + session id from JSON payload
+# Extract prompt + session id (+ inbound reply-to message id) from the payload.
 PROMPT=""
 SESSION_ID=""
+REPLY_TO=""
 if [ -n "$PAYLOAD" ]; then
-  read -r PROMPT SESSION_ID < <("$PY" -c "
-import json, sys
+  # ONE python call, reading the payload from STDIN — NEVER as an argv arg. A
+  # prompt >~32K chars passed as argv hits "Argument list too long" on Windows;
+  # the parse then silently fails and PROMPT="" so the inbound size guard could
+  # never fire (it fires at 50K > the argv limit). Reading stdin removes the cap.
+  # We also keep the prompt RAW here — the old code re-escaped newlines and ran
+  # `printf '%b'`, which mangled backslashes in Windows paths
+  # (C:\temp\new -> C:<tab>emp<lf>ew) and injected CR. Output shape:
+  #   line1 = session_id, line2 = reply_to msg id, line3+ = raw prompt.
+  PARSED=$(printf '%s' "$PAYLOAD" | "$PY" -c '
+import json, re, sys
 try:
-    d = json.loads(sys.argv[1] or '{}')
-    p = (d.get('prompt') or '').replace('\n', '\\n')
-    s = d.get('session_id') or ''
-    print(p, s)
+    d = json.loads(sys.stdin.read() or "{}")
 except Exception:
-    print('', '')
-" "$PAYLOAD" 2>/dev/null || true)
+    d = {}
+p = d.get("prompt") or ""
+s = d.get("session_id") or ""
+m = re.search(r"message_id=\"(\d+)\"", p)
+sys.stdout.write((s or "") + "\n")
+sys.stdout.write((m.group(1) if m else "") + "\n")
+sys.stdout.write(p)
+' 2>/dev/null || true)
+  SESSION_ID=$(printf '%s' "$PARSED" | sed -n '1p')
+  REPLY_TO=$(printf '%s' "$PARSED" | sed -n '2p')
+  PROMPT=$(printf '%s' "$PARSED" | sed -n '3,$p')
 fi
 
 if [ -z "$PROMPT" ]; then
@@ -50,23 +65,15 @@ if [ -z "$SESSION_ID" ]; then
   SESSION_ID=$(date -u +%Y%m%d-%H%M%S)
 fi
 
-# Restore literal newlines in PROMPT
-PROMPT_REAL=$(printf '%b' "$PROMPT")
+# Prompt is kept RAW (see the payload-parse note above) — no %b re-escaping,
+# so Windows-path backslashes and other literals survive intact.
+PROMPT_REAL="$PROMPT"
 
 # --- TG SLASH-COMMAND INTERCEPT ---
 # If the prompt is a TG-style slash command, handle it directly and block the
 # main thread. tg_commands.py exit codes: 0=handled, 1=not-a-cmd,
-# 2=handled-with-error. Try to extract the inbound TG message_id for threading.
-REPLY_TO=$(printf '%s' "$PAYLOAD" | "$PY" -c "
-import json, re, sys
-try:
-    d = json.loads(sys.argv[1] or '{}')
-    p = d.get('prompt') or ''
-    m = re.search(r'message_id=\"(\d+)\"', p)
-    print(m.group(1) if m else '')
-except Exception:
-    print('')
-" "$PAYLOAD" 2>/dev/null || echo "")
+# 2=handled-with-error.
+# REPLY_TO (inbound TG message_id for threading) was extracted in the parse above.
 
 FIRST_CHAR="${PROMPT_REAL:0:1}"
 if [ "$FIRST_CHAR" = "/" ]; then

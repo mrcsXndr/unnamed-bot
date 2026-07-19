@@ -250,10 +250,20 @@ def gate_not_checked_today() -> tuple[bool, str]:
     return True, f"stamp is {last or '(empty)'}, today is {today}"
 
 
+def _transcripts_dir() -> Path:
+    """Claude Code's transcript dir for this repo (path-munged cwd)."""
+    munged = str(REPO_ROOT).replace(":", "-").replace("\\", "-").replace("/", "-")
+    return Path(os.environ.get("USERPROFILE", "")) / ".claude" / "projects" / munged
+
+
 def gate_session_idle(now: float | None = None) -> tuple[bool, str]:
-    """(c) Idle iff the live session journal has NOT been touched within
-    IDLE_MIN minutes AND no fresh .busy marker. Conservative: when the session
-    or journal can't be resolved/read, return BUSY (do not restart blind)."""
+    """(c) Idle iff NO Claude Code transcript (.jsonl, recursive — subagents
+    and workflows write under subdirs) was touched within IDLE_MIN minutes AND
+    no fresh .busy marker. Transcript mtime is the load-bearing signal: CC
+    writes it on every message + tool call, unlike the journal which the
+    Director only writes sporadically (a journal-gated restart can nuke a live
+    session whose journal went stale mid-work). Conservative: when anything
+    can't be resolved/read, return BUSY (do not restart blind)."""
     now = now if now is not None else __import__("time").time()
     window = IDLE_MIN * 60
     sid = _current_session_id()
@@ -266,16 +276,26 @@ def gate_session_idle(now: float | None = None) -> tuple[bool, str]:
             age = round((now - busy.stat().st_mtime) / 60, 1)
             return False, f".busy marker fresh ({age}m old) -> BUSY"
     except OSError:
-        pass  # busy unreadable -> fall through to journal mtime
-    journal = sess_dir / "journal.md"
+        pass  # busy unreadable -> fall through to transcript mtime
+    tdir = _transcripts_dir()
     try:
-        age_s = now - journal.stat().st_mtime
+        newest: float | None = None
+        for p in tdir.rglob("*.jsonl"):
+            try:
+                m = p.stat().st_mtime
+            except OSError:
+                continue
+            if newest is None or m > newest:
+                newest = m
+        if newest is None:
+            return False, f"no transcripts under {tdir} -> cannot confirm idle, treat as BUSY"
     except OSError:
-        return False, f"journal unreadable ({journal}) -> treat as BUSY"
+        return False, f"transcript dir unreadable ({tdir}) -> treat as BUSY"
+    age_s = now - newest
     age_m = round(age_s / 60, 1)
     if age_s < window:
-        return False, f"journal modified {age_m}m ago (< {IDLE_MIN}m) -> BUSY"
-    return True, f"journal quiet for {age_m}m (>= {IDLE_MIN}m), no fresh .busy -> IDLE"
+        return False, f"newest transcript modified {age_m}m ago (< {IDLE_MIN}m) -> BUSY"
+    return True, f"transcripts quiet for {age_m}m (>= {IDLE_MIN}m), no fresh .busy -> IDLE"
 
 
 def run_auto(dry_run: bool, exe: str) -> int:

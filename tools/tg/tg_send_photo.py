@@ -19,6 +19,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / ".env"
 
+# Reuse tg_send.py's CommonMark->HTML converter so photo captions render the same
+# as text messages (bold/italic/links/code), instead of showing literal **markdown**.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from tg_send import to_html as _to_html
+except Exception:  # pragma: no cover - fail open to plain text
+    _to_html = None
+
 
 def load_env() -> dict:
     env = {}
@@ -59,35 +67,52 @@ def main():
     if not token or not chat_id:
         sys.exit("error: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID required in .env")
 
-    boundary = f"----BotPhoto{int(time.time()*1000)}"
     photo_bytes = photo_path.read_bytes()
+    # HTML-render the caption (truncation above ran on the raw text so we never
+    # cut a tag). parse_mode is dropped in the plain fallback below.
+    caption_html = _to_html(caption) if (caption and _to_html) else caption
 
-    body = b""
-    body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{chat_id}\r\n".encode("utf-8")
-    if caption:
-        body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n{caption}\r\n".encode("utf-8")
-    body += (
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; "
-        f"filename=\"{photo_path.name}\"\r\nContent-Type: image/png\r\n\r\n"
-    ).encode("utf-8")
-    body += photo_bytes
-    body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+    def build_body(cap: str, parse_mode: str | None) -> tuple[bytes, str]:
+        boundary = f"----BotPhoto{int(time.time()*1000)}"
+        body = b""
+        body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{chat_id}\r\n".encode("utf-8")
+        if cap:
+            body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n{cap}\r\n".encode("utf-8")
+        if parse_mode:
+            body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"parse_mode\"\r\n\r\n{parse_mode}\r\n".encode("utf-8")
+        body += (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; "
+            f"filename=\"{photo_path.name}\"\r\nContent-Type: image/png\r\n\r\n"
+        ).encode("utf-8")
+        body += photo_bytes
+        body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+        return body, boundary
 
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendPhoto",
-        data=body,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-    )
+    def post(cap: str, parse_mode: str | None):
+        body, boundary = build_body(cap, parse_mode)
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendPhoto",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        return json.loads(urllib.request.urlopen(req, timeout=30).read())
+
     try:
-        resp = json.loads(urllib.request.urlopen(req, timeout=30).read())
+        # Try HTML first; if Telegram rejects the entities, fall back to the raw
+        # (unconverted) caption as plain text so the message still goes out.
+        try:
+            resp = post(caption_html, "HTML" if (caption and _to_html) else None)
+            if not resp.get("ok"):
+                raise ValueError(resp)
+        except (urllib.error.HTTPError, ValueError):
+            resp = post(caption, None)
         if resp.get("ok"):
-            mid = resp.get("result", {}).get("message_id")
-            print(f"sent (id: {mid})")
+            print(f"sent (id: {resp.get('result', {}).get('message_id')})")
         else:
             sys.exit(f"send failed: {resp}")
     except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        sys.exit(f"send error: HTTP {e.code} — {body[:400]}")
+        err = e.read().decode("utf-8", errors="replace")
+        sys.exit(f"send error: HTTP {e.code} — {err[:400]}")
     except Exception as e:
         sys.exit(f"send error: {type(e).__name__}: {e}")
 

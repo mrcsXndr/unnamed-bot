@@ -73,7 +73,17 @@ PROBE_TIMEOUT_S = 10
 ALIVE = "ALIVE"
 DEAD = "DEAD"
 UNKNOWN = "UNKNOWN"
+STOLEN = "STOLEN"  # slot held (409) but NOT by our live bot claude's tree
 FREE = "FREE"  # slot unclaimed this instant (HTTP 200) — internal to _probe_once
+
+# Holder verification (STOLEN detection): when the slot probes ALIVE, netstat
+# the Telegram API connections and walk each owner's parent chain. A plain
+# `claude` launch (no --channels) can auto-start a bridge from global
+# enabledPlugins and steal the slot — probe says ALIVE while the bot's
+# inbound is dead for hours. Samples > 1 because the plugin interval-polls
+# (connection gaps between cycles are normal).
+HOLDER_SAMPLES = 3
+HOLDER_SLEEP_S = 3
 
 
 def _now_iso() -> str:
@@ -134,6 +144,101 @@ def _probe_once(token: str) -> str:
         return UNKNOWN
 
 
+_HOLDER_PS = r"""
+$probeErr = ''
+try {
+    $ips = [System.Net.Dns]::GetHostAddresses('api.telegram.org') | ForEach-Object IPAddressToString
+    if (-not $ips) { $probeErr = 'dns-empty' }
+    $pids = Get-NetTCPConnection -State Established -ErrorAction Stop |
+        Where-Object { $_.RemoteAddress -in $ips } |
+        Select-Object -ExpandProperty OwningProcess -Unique
+} catch { $probeErr = "$_" }
+$out = @()
+foreach ($p in $pids) {
+    $chain = @(); $cur = [int]$p
+    for ($i = 0; $i -lt 10 -and $cur -gt 4; $i++) {
+        $pr = Get-CimInstance Win32_Process -Filter "ProcessId=$cur" -ErrorAction SilentlyContinue
+        if (-not $pr) { break }
+        $chain += [int]$pr.ProcessId
+        $cur = [int]$pr.ParentProcessId
+    }
+    $out += ,@{ pid = [int]$p; chain = $chain }
+}
+@{ holders = $out; err = $probeErr } | ConvertTo-Json -Compress -Depth 5
+"""
+
+
+def _holder_verdict(claude_pid: int | None = None) -> str:
+    """When the slot probes ALIVE, verify WHO holds it. Returns:
+      "ours"    — a local TG-API connection's parent chain contains our live
+                  bot claude PID (healthy).
+      "foreign" — local TG-API connection(s) exist but none belong to our
+                  claude's tree (another local claude/bridge stole the slot).
+      "absent"  — no local TG-API connection seen across the sampling window
+                  (holder is remote/another machine, or we raced the poll
+                  cycle every time). NOT proof of theft — the caller must NOT
+                  treat this as STOLEN (benign absences — DNS answer missing
+                  our connection's RemoteAddress, racing the poll gap 3x —
+                  would otherwise restart a healthy bot).
+      "unknown" — could not determine (no claude PID, PS failure) — treat as
+                  healthy, take no action (fail-open)."""
+    # Precedence: explicit --claude-pid (the supervisor resolves the live bot
+    # claude every tick and passes it, for contexts where parent-walk can't
+    # find our own PID), then parent-walk (in-session runs), then bot_state
+    # (other contexts).
+    our_pid = claude_pid or _live_claude_pid()
+    if our_pid is None:
+        try:
+            st = json.loads((REPO_ROOT / ".claude" / ".bot_state.json")
+                            .read_text(encoding="utf-8"))
+            our_pid = int(st.get("claude_pid") or 0) or None
+        except Exception:
+            our_pid = None
+    if our_pid is None:
+        return "unknown"
+    # Absolute path: session env can have a clobbered PATH and scheduled
+    # tasks can miss user PATH — never rely on it.
+    ps_exe = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                          "System32", "WindowsPowerShell", "v1.0",
+                          "powershell.exe")
+    saw_foreign = False
+    saw_any = False
+    for i in range(HOLDER_SAMPLES):
+        try:
+            r = subprocess.run(
+                [ps_exe, "-NoProfile", "-Command", _HOLDER_PS],
+                capture_output=True, text=True, timeout=45, encoding="utf-8",
+            )
+            raw = (r.stdout or "").strip()
+            if not raw:
+                # Script produced nothing at all -> PS-level failure, not
+                # "zero connections". Indeterminate.
+                _log("holder probe: empty PS output (fail-open)")
+                return "unknown"
+            envelope = json.loads(raw)
+            if envelope.get("err"):
+                # Cmdlet failure inside the script (e.g. Get-NetTCPConnection
+                # access denied) — an empty holder list would be a LIE here.
+                _log(f"holder probe: PS err sentinel: {envelope['err'][:200]}")
+                return "unknown"
+            holders = envelope.get("holders") or []
+            if isinstance(holders, dict):
+                holders = [holders]
+            for h in holders:
+                saw_any = True
+                if our_pid in (h.get("chain") or []):
+                    return "ours"
+                saw_foreign = True
+        except Exception as e:
+            _log(f"holder probe failed (fail-open): {e!r}")
+            return "unknown"
+        if i < HOLDER_SAMPLES - 1:
+            time.sleep(HOLDER_SLEEP_S)
+    if saw_foreign:
+        return "foreign"
+    return "absent" if not saw_any else "unknown"
+
+
 def classify(token: str) -> str:
     """Sample the poll slot across a window LONGER than the plugin's poll cycle.
     The plugin interval-polls, so a healthy slot flaps 409/200 — a single (or
@@ -177,8 +282,10 @@ def _recent_heal_count(now: float | None = None) -> int:
     return count
 
 
-def heal(dry_run: bool) -> int:
+def heal(dry_run: bool, claude_pid: int | None = None) -> int:
     """Confirmed-DEAD path: enforce backoff, check idle gate, then restart.
+    claude_pid: same explicit PID used for detection (--claude-pid) so heal
+    and detection can never disagree on the target.
     Always returns 0 (heal is best-effort; never a hard failure)."""
     recent = _recent_heal_count()
     if recent >= MAX_HEALS:
@@ -195,7 +302,7 @@ def heal(dry_run: bool) -> int:
             _send_tg("TG poller down, deferring restart (session busy)")
         return 0
 
-    old_pid = _live_claude_pid()
+    old_pid = claude_pid or _live_claude_pid()
     if dry_run:
         _log(f"DRY-RUN heal: would restart-bot -OldPid {old_pid} "
              f"(idle: {why})")
@@ -217,6 +324,12 @@ def heal(dry_run: bool) -> int:
 def main(argv: list[str]) -> int:
     probe_only = "--probe-only" in argv[1:]
     dry_run = "--dry-run" in argv[1:]
+    claude_pid: int | None = None
+    if "--claude-pid" in argv[1:]:
+        try:
+            claude_pid = int(argv[argv.index("--claude-pid") + 1]) or None
+        except (IndexError, ValueError):
+            claude_pid = None
 
     token = _read_token()
     if not token:
@@ -229,6 +342,22 @@ def main(argv: list[str]) -> int:
 
     verdict = classify(token)
 
+    # ALIVE only proves SOMEONE polls — verify it's OUR claude's tree. A
+    # foreign holder (a plain-claude launch auto-starting a bridge) means our
+    # inbound is dead while the probe looks healthy.
+    if verdict == ALIVE:
+        holder = _holder_verdict(claude_pid)
+        if holder == "foreign":
+            # STOLEN requires POSITIVE evidence: a local TG-API connection
+            # whose parent chain does NOT contain our claude. "absent" is NOT
+            # enough — benign absences (DNS/RemoteAddress mismatch, racing
+            # the poll gap) would restart a healthy bot.
+            verdict = STOLEN
+            _log("slot ALIVE but holder=foreign -> STOLEN")
+        elif holder == "absent":
+            _log("slot ALIVE, holder=absent (no local TG conn seen) — "
+                 "treating as healthy, no action")
+
     if probe_only:
         print(verdict)
         return 0
@@ -240,8 +369,17 @@ def main(argv: list[str]) -> int:
         _log("UNKNOWN: indeterminate probe — no action")
         return 0
 
+    if verdict == STOLEN:
+        _log("STOLEN: poll slot held by a foreign process — healing (restart "
+             "reclaims; the thief's plugin gives up after one 409)")
+        if not dry_run:
+            _send_tg("⚠️ TG poll slot STOLEN by another claude session on this "
+                     "box — my inbound is dead. Auto-healing (restart reclaims); "
+                     "close stray `claude` windows to prevent re-theft.")
+        return heal(dry_run=dry_run, claude_pid=claude_pid)
+
     # verdict == DEAD
-    return heal(dry_run=dry_run)
+    return heal(dry_run=dry_run, claude_pid=claude_pid)
 
 
 if __name__ == "__main__":

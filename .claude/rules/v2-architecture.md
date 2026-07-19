@@ -123,9 +123,13 @@ defensible version; auto-firing on every subagent return is pure cost.
 With journal + timeline carrying state across compaction, there's rarely a
 reason to start fresh. Default to `--continue` (the launch scripts do). Fresh
 session only for: hard migrations, intentional context reset, or debugging the
-harness itself. The auto-restart flow forces FRESH via the one-shot
-`.claude/.bot_fresh_restart` marker (Claude Code's aged-session resume picker
-blocks headless loops); journal/timeline/recall make that ~lossless.
+harness itself. A **supervisor RESTART** of a recently-alive session relaunches
+with `--continue` (a just-killed session is not aged, so it resumes cleanly and
+its working context is preserved — never force FRESH on a live session's
+restart). Only a **cold-start** (after reboot/crash) forces FRESH via the
+one-shot `.claude/.bot_fresh_restart` marker, since an aged session would hit
+Claude Code's resume picker that blocks headless loops; journal/timeline/recall
+make that cold FRESH ~lossless.
 
 ## Windows resilience layer (opt-in; see docs/SETUP.md)
 
@@ -140,6 +144,23 @@ blocks headless loops); journal/timeline/recall make that ~lossless.
 - **Self-restart** (`scripts/restart-bot.ps1`, used by `/update` and the
   supervisor) — wait-for-old-PID-then-relaunch, so two instances never attach
   the same conversation.
+
+**TG single-poller invariant + enablement model.** The Telegram Bot API allows
+only ONE `getUpdates` long-poller per bot token; a second `claude` launched with
+`--channels` on the same token SIGTERM-steals the slot and the first poller then
+409s into a permanent dead state (outbound `tg_send.py` keeps working, inbound
+silently dies). Two rules keep exactly one poller:
+- **Enablement lives ONLY in the tracked `.claude/tg-enable.settings.json`**,
+  which the launcher passes explicitly via `claude --settings … --channels …` and
+  ONLY when it owns the poller lock (`.claude/.tg_owner.lock`). NEVER put
+  `enabledPlugins` for telegram in `.claude/settings.json` or
+  `settings.local.json` (or global): a settings-file enablement is auto-loaded by
+  EVERY `claude` launch in this repo cwd — plain `claude`, headless `--print`
+  spawns — each starting a bridge that steals the slot.
+- **Every headless/spawned `claude` passes `--setting-sources user`** (defense in
+  depth) so it can't load the repo-local plugin enablement even by accident.
+- The watchdog additionally detects a STOLEN slot (409 held by a foreign local
+  claude, not our tree) and heals it on the same idle-gated restart path.
 
 ## Token-saving discipline (non-negotiable)
 

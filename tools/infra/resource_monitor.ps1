@@ -13,7 +13,7 @@
 param(
   [switch]$Clean,
   [switch]$Tg,                 # self-alert to Telegram on warn/critical (cooldown dedup)
-  [int]$AbKillThreshold = 10,  # agent-browser chrome count above this = orphan pile -> clean
+  [int]$AbKillThreshold = 30,  # total agent-browser chrome cap: one live session = 11-12 procs, so warn only past ~2 sessions
   [int]$TgCooldownH = 6        # don't re-alert the SAME issue set within this many hours
 )
 
@@ -39,15 +39,34 @@ if (Test-Path $smi) {
 }
 
 # --- agent-browser "Chrome for Testing" orphans (the bot's automation browser) ---
-$ab = Get-Process -Name chrome -EA SilentlyContinue | Where-Object { $_.Path -like '*\.agent-browser\*' }
-$abCount = @($ab).Count
-$abMem = if ($abCount) { [math]::Round((($ab | Measure-Object WorkingSet -Sum).Sum)/1MB,0) } else { 0 }
+# Orphan = an agent-browser chrome whose PARENT process is gone (daemon/root
+# chrome died without teardown). A raw proc COUNT is the wrong signal: one
+# healthy live session spawns 11+ children, which tripped false "orphan pile"
+# warns — and with -Clean would have KILLED a session mid-use. The path filter
+# keeps this blind to the user's real Chrome. $AbKillThreshold is kept as a
+# belt-and-braces cap on TOTAL procs (a huge pile is suspect even with live
+# parents — e.g. the daemon itself is leaking sessions).
+$abAll = Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" -EA SilentlyContinue |
+         Where-Object { $_.ExecutablePath -like '*\.agent-browser\*' }
+$abCount = @($abAll).Count
+$abMem = 0
 if ($abCount -gt 0) {
-  if ($abCount -gt $AbKillThreshold) {
-    Add-Issue 'warn' 'browser' "$abCount stray agent-browser Chrome procs ($abMem MB) — orphan pile"
-    if ($Clean) { $ab | Stop-Process -Force -EA SilentlyContinue; $actions += "killed $abCount agent-browser Chrome orphans (${abMem}MB freed)" }
+  $livePids = @{}
+  Get-Process -EA SilentlyContinue | ForEach-Object { $livePids[$_.Id] = $true }
+  $orphans = @($abAll | Where-Object { -not $livePids[[int]$_.ParentProcessId] })
+  $mem = { param($set) if (@($set).Count) { [math]::Round((($set | Measure-Object WorkingSetSize -Sum).Sum)/1MB,0) } else { 0 } }
+  $abMem = & $mem $abAll
+  if (@($orphans).Count -gt 0) {
+    $oMem = & $mem $orphans
+    Add-Issue 'warn' 'browser' "$(@($orphans).Count) orphaned agent-browser Chrome procs ($oMem MB, parent dead) of $abCount total"
+    if ($Clean) {
+      $orphans | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
+      $actions += "killed $(@($orphans).Count) orphaned agent-browser Chrome procs (${oMem}MB freed)"
+    }
+  } elseif ($abCount -gt $AbKillThreshold) {
+    Add-Issue 'warn' 'browser' "$abCount agent-browser Chrome procs ($abMem MB) — parents alive but pile is large (leaking sessions?); not auto-killed"
   } else {
-    Add-Issue 'info' 'browser' "$abCount agent-browser Chrome procs ($abMem MB) — within one active session"
+    Add-Issue 'info' 'browser' "$abCount agent-browser Chrome procs ($abMem MB) — live session"
   }
 }
 

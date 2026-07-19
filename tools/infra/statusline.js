@@ -11,7 +11,10 @@ const PRICING = {
   haiku:  { input: 0.8, cache_write: 0.2,  cache_read: 0.08, output: 4 },
 };
 const USD_TO_EUR = 0.92;
-const COST_CACHE = path.join(os.homedir(), '.claude', 'api_cost_cache.json');
+// Honor CLAUDE_CONFIG_DIR so per-personality bot instances read their own
+// config home (transcripts, cost cache, bot.pid) instead of the real ~/.claude.
+const CONFIG_HOME = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+const COST_CACHE = path.join(CONFIG_HOME, 'api_cost_cache.json');
 const CACHE_TTL_MS = 86_400_000; // recalculate once per day (session start triggers it)
 
 function getTier(model) {
@@ -23,7 +26,7 @@ function getTier(model) {
 
 function calcLifetimeCost() {
   let total = 0;
-  const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+  const projectsDir = path.join(CONFIG_HOME, 'projects');
   try {
     for (const proj of fs.readdirSync(projectsDir)) {
       const projPath = path.join(projectsDir, proj);
@@ -72,7 +75,7 @@ function getCachedCost() {
 function tgStatus() {
   if (process.env.BOT_HAS_TG === '0') return '';
   try {
-    const pidFile = path.join(os.homedir(), '.claude', 'channels', 'telegram', 'bot.pid');
+    const pidFile = path.join(CONFIG_HOME, 'channels', 'telegram', 'bot.pid');
     const pid = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10);
     if (!pid) return 'TG\u{1F534}';
     process.kill(pid, 0); // throws ESRCH if dead, EPERM if alive-but-not-ours (still alive)

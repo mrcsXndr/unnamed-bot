@@ -208,6 +208,46 @@ def send_chunk(
         return {"ok": False, "error": str(e)}
 
 
+def send_photo(token: str, chat_id: str, path: str, reply_to: int | None) -> dict:
+    """sendPhoto via multipart (no caption — the formatted text message with the
+    status footer is sent separately, so attachments never bypass the footer:
+    raw plugin replies dropped footer + formatting)."""
+    import mimetypes
+    import uuid
+    boundary = uuid.uuid4().hex
+    with open(path, "rb") as f:
+        img = f.read()
+    fields = {"chat_id": chat_id}
+    if reply_to:
+        fields["reply_to_message_id"] = str(reply_to)
+        fields["allow_sending_without_reply"] = "true"
+    parts = []
+    for k, v in fields.items():
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode()
+        )
+    ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    fname = os.path.basename(path)
+    parts.append(
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"{fname}\"\r\n"
+        f"Content-Type: {ctype}\r\n\r\n".encode() + img + b"\r\n"
+    )
+    parts.append(f"--{boundary}--\r\n".encode())
+    body = b"".join(parts)
+    req = urllib.request.Request(
+        TG_API.format(token=token).replace("/sendMessage", "/sendPhoto"),
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return {"ok": False, "http_status": e.code, "error": e.read().decode("utf-8", errors="replace")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Send a Telegram message with auto MD2 + split")
     p.add_argument("text", nargs="?", help="Message text. Reads stdin if omitted.")
@@ -218,6 +258,9 @@ def main() -> int:
     p.add_argument("--quiet", action="store_true", help="Suppress output on success")
     p.add_argument("--no-status", action="store_true",
                    help="Skip the v2 status footer (default: append unless BOT_TG_STATUS=0)")
+    p.add_argument("--photo", action="append", default=[],
+                   help="Attach an image (repeatable). Sent AFTER the text message, threaded "
+                        "under it, so formatting + status footer are never bypassed.")
     args = p.parse_args()
 
     text = args.text if args.text is not None else sys.stdin.read()
@@ -285,6 +328,17 @@ def main() -> int:
             print(f"  send failed: {result}", file=sys.stderr)
             return 2
         sent_ids.append(result["result"]["message_id"])
+
+    # Photos ride AFTER the text, threaded under the first sent message.
+    for photo in args.photo:
+        if not os.path.exists(photo):
+            print(f"  photo not found: {photo}", file=sys.stderr)
+            continue
+        r = send_photo(token, chat_id, photo, sent_ids[0] if sent_ids else None)
+        if r.get("ok"):
+            sent_ids.append(r["result"]["message_id"])
+        else:
+            print(f"  photo send failed: {str(r.get('error', ''))[:200]}", file=sys.stderr)
 
     if not args.quiet:
         for mid in sent_ids:

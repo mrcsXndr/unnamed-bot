@@ -104,12 +104,12 @@
           },
           {
             "type": "command",
-            "command": "bash .claude/hooks/auto-commit.sh"
+            "command": "python tools/v2/cost_meter.py --stdin || true",
+            "timeout": 20
           },
           {
             "type": "command",
-            "command": "python tools/v2/cost_meter.py --stdin || true",
-            "timeout": 20
+            "command": "bash .claude/hooks/auto-commit.sh"
           }
         ]
       }

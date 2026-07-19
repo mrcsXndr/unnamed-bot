@@ -97,17 +97,21 @@ if ($OldShellPid -gt 0) {
     }
 }
 
-# --- 2. Force the relaunch to start FRESH (one-shot marker) ------------------
-# Claude Code `--continue` on an aged/over-limit session shows a BLOCKING
-# "resume from summary" picker that stalls a headless loop, and no flag skips
-# it. A detached self-restart must be hands-off, so drop a marker the launcher
-# reads + deletes on startup to force a FRESH session — the v2 journal/
-# timeline/recall channels rebuild context at session-start.
+# --- 2. Relaunch with --continue (long-running context is load-bearing) ------
+# restart-bot is ONLY invoked to relaunch a session that was RECENTLY ALIVE (the
+# supervisor's restart path kills a live claude; manual -OldPid targets a running
+# PID). A just-killed session is NOT aged, so `--continue` resumes cleanly without
+# the Claude Code "resume from summary" picker — that blocking picker only fires
+# on genuinely aged sessions (the cold-start-after-reboot case, handled by the
+# supervisor's cold-start path, which sets the fresh marker itself). Forcing FRESH
+# here would THROW AWAY the just-killed session's working context. So we DELETE any
+# stale fresh marker and let the relaunch --continue.
 try {
-    New-Item -ItemType File -Path (Join-Path $repo '.claude\.bot_fresh_restart') -Force | Out-Null
-    Write-RestartLog "dropped fresh-restart marker -> relaunch will start FRESH"
+    $freshMarker = Join-Path $repo '.claude\.bot_fresh_restart'
+    if (Test-Path $freshMarker) { Remove-Item $freshMarker -Force -ErrorAction SilentlyContinue }
+    Write-RestartLog "relaunch will --continue (no fresh marker; long-running context preserved)"
 } catch {
-    Write-RestartLog "could not drop fresh marker: $($_.Exception.Message)"
+    Write-RestartLog "marker cleanup note: $($_.Exception.Message)"
 }
 
 # --- 3. Launch in a fresh terminal -------------------------------------------
@@ -129,7 +133,7 @@ $wtPath = $null
 if ($wtCmd) { $wtPath = $wtCmd.Source } elseif (Test-Path $wtAlias) { $wtPath = $wtAlias }
 
 $relaunchDesc = if ($wtProfile -and $wtPath) {
-    "wt -p '$wtProfile'"
+    "wt -w 0 -p '$wtProfile' (reuse MRU window)"
 } else {
     "$shellExe -NoExit -File $launcher -Continue -StartedBy supervisor-restart"
 }
@@ -142,7 +146,10 @@ if ($DryRun) {
 
 try {
     if ($wtProfile -and $wtPath) {
-        Start-Process -FilePath $wtPath -ArgumentList @('-p', $wtProfile)
+        # `-w 0` = open the new tab in the MOST-RECENTLY-USED WT window instead
+        # of spawning a new one (windowingBehavior defaults to useNew, which
+        # left the old window on screen after every restart).
+        Start-Process -FilePath $wtPath -ArgumentList @('-w', '0', '-p', $wtProfile)
     } else {
         Start-Process -FilePath $shellExe -ArgumentList @(
             '-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass',

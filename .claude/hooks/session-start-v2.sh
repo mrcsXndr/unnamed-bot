@@ -103,21 +103,43 @@ def journal_payload(p):
     tail = bullets[-15:]
     return "\n".join(tail)[:4000]
 
-# 1. newest non-stub timeline
-for p in newest_first("*/timeline.md"):
-    pl = timeline_payload(p)
-    if pl:
-        print(f"(from {p.parent.name}/timeline.md)\n{pl}")
-        sys.exit(0)
+# SESSION-RECENCY-FIRST. The old logic took the newest *timeline* regardless of
+# session age, so a session that ended without building a timeline (but with a
+# rich journal) lost to an OLDER session that had one — injecting stale context.
+# Fix: rank SESSIONS by recency (max mtime of their journal/timeline), then for
+# the newest session prefer its timeline, else its journal. Freshest wins.
+def session_dirs_newest_first():
+    try:
+        dirs = [d for d in sessions.iterdir() if d.is_dir()]
+    except OSError:
+        return []
+    def recency(d):
+        m = 0.0
+        for name in ("timeline.md", "journal.md"):
+            f = d / name
+            try:
+                if f.is_file():
+                    m = max(m, f.stat().st_mtime)
+            except OSError:
+                pass
+        return m
+    return sorted(dirs, key=recency, reverse=True)
 
-# 2. newest journal with real entries
-for p in newest_first("*/journal.md"):
-    pl = journal_payload(p)
-    if pl:
-        print(f"(recent journal entries — {p.parent.name})\n{pl}")
-        sys.exit(0)
+for d in session_dirs_newest_first():
+    tl = d / "timeline.md"
+    if tl.is_file():
+        pl = timeline_payload(tl)
+        if pl:
+            print(f"(from {d.name}/timeline.md)\n{pl}")
+            sys.exit(0)
+    jr = d / "journal.md"
+    if jr.is_file():
+        pl = journal_payload(jr)
+        if pl:
+            print(f"(recent journal entries — {d.name})\n{pl}")
+            sys.exit(0)
 
-# 3. nothing -> empty (block omitted by the hook)
+# nothing usable -> empty (block omitted by the hook)
 PYEOF
 )
 GIT_LOG=$(git log --oneline -5 2>/dev/null || echo "")
@@ -190,6 +212,14 @@ PYEOF
 # `surface` prints nothing (exit 0) when there's nothing due.
 COMMITMENTS=$("$PY" "$REPO/tools/v2/commitments.py" surface 2>/dev/null || true)
 
+# --- Persistent TDL (single always-in-memory backlog) --------------------
+# memory/TDL.md is the durable, HAND-MAINTAINED "what's unfinished" doc so
+# nothing lives in session context alone. The Director edits it directly
+# (Write/Edit) with rich per-item detail; this hook only READS it — inject the
+# `## Open` section verbatim (everything from `## Open` up to the next
+# top-level `## ` heading). STRICTLY FAIL-OPEN: missing file -> empty block.
+TDL_OPEN=$(awk '/^## Open[[:space:]]*$/{f=1;next} /^## /{f=0} f' "$REPO/memory/TDL.md" 2>/dev/null || true)
+
 CONTEXT=""
 if [ -n "$LAST_SESSION" ]; then
   CONTEXT="Last session:\n$LAST_SESSION"
@@ -210,6 +240,9 @@ if [ -n "$TIMELINE_BODY" ]; then
 fi
 if [ -n "$COMMITMENTS" ]; then
   CONTEXT="$CONTEXT\n\n## Due commitments\n$COMMITMENTS"
+fi
+if [ -n "$TDL_OPEN" ]; then
+  CONTEXT="$CONTEXT\n\n## Open TDL (persistent backlog — hand-maintained in memory/TDL.md; recheck it, close items on ship)\n$TDL_OPEN"
 fi
 
 if [ -n "$CONTEXT" ]; then

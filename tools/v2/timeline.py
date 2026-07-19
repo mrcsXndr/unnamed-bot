@@ -36,6 +36,12 @@ TIMELINES_DIR = REPO_ROOT / "memory" / "timelines"
 DISTILL_MODEL = os.environ.get("BOT_DISTILL_MODEL", "claude-opus-4-8")
 DISTILL_TIMEOUT = int(os.environ.get("BOT_DISTILL_TIMEOUT", "180"))
 
+# When this script runs DETACHED (precompact_timeline.py spawns it with no
+# console), the inner claude.exe would otherwise get a NEW visible console
+# window. CREATE_NO_WINDOW keeps the headless run silent; harmless when a
+# console already exists.
+_NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -197,13 +203,18 @@ def _llm_distill(session_id: str) -> int:
 
     try:
         result = subprocess.run(
-            ["claude", "--print", "--model", DISTILL_MODEL],
+            # --setting-sources user: skip PROJECT settings so this headless
+            # run can't load the repo-local telegram plugin and steal the
+            # poller slot from the live bot.
+            ["claude", "--print", "--model", DISTILL_MODEL,
+             "--setting-sources", "user"],
             input=prompt,
             capture_output=True,
             text=True,
             timeout=DISTILL_TIMEOUT,
             encoding="utf-8",
             errors="replace",
+            **_NO_WINDOW,
         )
     except FileNotFoundError:
         print("ERROR: claude CLI not on PATH; falling back to structural", file=sys.stderr)
@@ -287,13 +298,18 @@ Apply the 5-band credibility rubric. Deduplicate.
 """
     try:
         result = subprocess.run(
-            ["claude", "--print", "--model", DISTILL_MODEL],
+            # --setting-sources user: skip PROJECT settings so this headless
+            # run can't load the repo-local telegram plugin and steal the
+            # poller slot from the live bot.
+            ["claude", "--print", "--model", DISTILL_MODEL,
+             "--setting-sources", "user"],
             input=prompt,
             capture_output=True,
             text=True,
             timeout=DISTILL_TIMEOUT,
             encoding="utf-8",
             errors="replace",
+            **_NO_WINDOW,
         )
         if result.returncode == 0 and len(result.stdout or "") > 50:
             target.write_text(result.stdout, encoding="utf-8")

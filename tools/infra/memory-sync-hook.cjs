@@ -157,8 +157,10 @@ function safePullRebase() {
     git(`pull --rebase --autostash ${REMOTE} ${BRANCH}`);
     return { ok: true, action: 'rebased' };
   } catch (e) {
+    // `--autostash` is restored automatically by `rebase --abort`; do NOT
+    // `stash pop` here — with no rebase-created autostash entry that would pop
+    // an unrelated pre-existing stash and silently mutate the working tree.
     gitSilent('rebase --abort');
-    gitSilent('stash pop');
     writeConflictFlag(`pull --rebase failed: ${(e.stderr || e.message || '').toString().slice(0, 500)}`);
     return { ok: false, action: 'conflict', error: e.message };
   }

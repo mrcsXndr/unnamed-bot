@@ -24,7 +24,17 @@ declare -a HOME_FILES=(
 
 declare -a CLAUDE_PROJECT_FILES=(
   ".claude/settings.json:claude-project-settings.json"
+  # Gitignored local overrides. NOTE: TG plugin enablement does NOT live here —
+  # it lives in the TRACKED .claude/tg-enable.settings.json (the launcher passes
+  # it via --settings; git is its backup). Kept for any future local overrides.
+  ".claude/settings.local.json:claude-project-settings.local.json"
 )
+
+# How often push actually WRITES (seconds). Self-gate so calling push often
+# (e.g. from launch or a supervisor tick) can't spam Drive. Default 6h.
+PUSH_MIN_INTERVAL="${BOT_PUSH_MIN_INTERVAL:-21600}"
+# Per-repo ts marker so bot clones sharing this $HOME don't share one gate.
+PUSH_TS_FILE="$HOME_DIR/.$(basename "$PROJECT_DIR")_secret_backup_ts"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -51,23 +61,50 @@ check_drive() {
 }
 
 do_push() {
+  # Self-gate: skip if a push ran within PUSH_MIN_INTERVAL (unless FORCE=1).
+  if [ "${FORCE:-0}" != "1" ] && [ -f "$PUSH_TS_FILE" ]; then
+    local last now age; last=$(cat "$PUSH_TS_FILE" 2>/dev/null || echo 0); now=$(date +%s)
+    age=$(( now - last ))
+    if [ "$age" -lt "$PUSH_MIN_INTERVAL" ]; then
+      log "push skipped — last backup $(( age / 3600 ))h ago (gate ${PUSH_MIN_INTERVAL}s; use FORCE=1 to override)"
+      return 0
+    fi
+  fi
   log "Pushing settings to Google Drive..."
   local count=0
+
+  # Timeout-wrapped copy: a hung Drive mount must never stall the caller (a
+  # supervisor tick may run push synchronously). Skips byte-identical files.
+  push_copy() {
+    local src="$1" dst="$2" label="$3"
+    if [ -f "$dst" ] && cmp -s "$src" "$dst" 2>/dev/null; then
+      log "  $label (unchanged)"
+      return 0
+    fi
+    if timeout 15 cp "$src" "$dst" 2>/dev/null; then
+      log "  $label"
+      return 0
+    else
+      warn "  $label push TIMED OUT/failed (Drive mount hung?)"
+      return 1
+    fi
+  }
+
   for f in "${PROJECT_FILES[@]}"; do
     src="$PROJECT_DIR/$f"; dst="$DRIVE_DIR/$f"
-    if [ -f "$src" ]; then cp "$src" "$dst"; log "  $f"; count=$((count + 1))
+    if [ -f "$src" ]; then push_copy "$src" "$dst" "$f" && count=$((count + 1))
     else warn "  skip $f (not found)"; fi
   done
   for entry in "${HOME_FILES[@]}"; do
     IFS=':' read -r home_rel drive_rel <<< "$entry"
     src="$HOME_DIR/$home_rel"; dst="$DRIVE_DIR/$drive_rel"
-    if [ -f "$src" ]; then cp "$src" "$dst"; log "  ~/$home_rel -> $drive_rel"; count=$((count + 1))
+    if [ -f "$src" ]; then push_copy "$src" "$dst" "~/$home_rel -> $drive_rel" && count=$((count + 1))
     else warn "  skip ~/$home_rel (not found)"; fi
   done
   for entry in "${CLAUDE_PROJECT_FILES[@]}"; do
     IFS=':' read -r proj_rel drive_rel <<< "$entry"
     src="$PROJECT_DIR/$proj_rel"; dst="$DRIVE_DIR/$drive_rel"
-    if [ -f "$src" ]; then cp "$src" "$dst"; log "  $proj_rel -> $drive_rel"; count=$((count + 1))
+    if [ -f "$src" ]; then push_copy "$src" "$dst" "$proj_rel -> $drive_rel" && count=$((count + 1))
     else warn "  skip $proj_rel (not found)"; fi
   done
   # Sync Claude Code memories
@@ -85,6 +122,7 @@ do_push() {
     fi
   done
   [ "$mem_found" -eq 0 ] && warn "  skip memory (no .claude/projects/*/memory/ found)"
+  date +%s > "$PUSH_TS_FILE" 2>/dev/null || true
   log "Pushed $count items to Drive."
 }
 
@@ -146,6 +184,7 @@ do_status() {
   else warn "$diffs file(s) out of sync."; fi
 }
 
+[ "${2:-}" = "--force" ] && FORCE=1
 case "${1:-help}" in
   push)   check_drive; do_push ;;
   pull)   check_drive; do_pull ;;

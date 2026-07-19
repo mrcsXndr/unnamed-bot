@@ -37,7 +37,28 @@ Format:
 
 Rules: keep SHORT, only update docs if meaningful, commit silently, no push"
 
-nohup claude --print --model sonnet --dangerously-skip-permissions -p "$PROMPT" \
-  > /dev/null 2>&1 &
+# Time-gate: Stop fires EVERY turn; each debrief is a headless claude run
+# (real spend). One per window is plenty.
+GATE_FILE=".claude/.debrief_last_ts"
+GATE_SECONDS=$(( ${BOT_DEBRIEF_GATE_HOURS:-6} * 3600 ))
+NOW=$(date +%s)
+if [ -f "$GATE_FILE" ]; then
+  LAST=$(cat "$GATE_FILE" 2>/dev/null || echo 0)
+  case "$LAST" in (*[!0-9]*|'') LAST=0;; esac
+  [ $(( NOW - LAST )) -lt "$GATE_SECONDS" ] && exit 0
+fi
+echo "$NOW" > "$GATE_FILE" 2>/dev/null || true
+
+# Run claude headless in background. CRITICAL:
+# - --setting-sources user skips the PROJECT settings — the repo-local
+#   enabledPlugins would otherwise load the telegram plugin in this throwaway
+#   session, which STEALS the getUpdates slot from the real bot.
+# - run_hidden.py spawns it DETACHED + CREATE_NO_WINDOW so no console window
+#   ever pops (nohup does NOT prevent Windows console allocation).
+PROMPT_FILE=".claude/.debrief_prompt.txt"
+printf '%s' "$PROMPT" > "$PROMPT_FILE" 2>/dev/null || exit 0
+PYTHONIOENCODING=utf-8 python tools/v2/run_hidden.py --prompt-file "$PROMPT_FILE" -- \
+  claude --print --model sonnet --dangerously-skip-permissions \
+  --setting-sources user -p @PROMPT@ 2>/dev/null || true
 
 exit 0
