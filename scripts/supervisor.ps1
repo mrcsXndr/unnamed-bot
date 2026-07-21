@@ -217,6 +217,27 @@ function Invoke-CommitmentsHeartbeat {
     }
 }
 
+function Invoke-SessionExpiryMonitor {
+    # Notify-only: warn AHEAD of a Claude login-session (refresh-token) expiry so
+    # the bot never silently goes dark waiting on a manual /login. Reads
+    # ~/.claude/.credentials.json -> claudeAiOauth.refreshTokenExpiresAt and
+    # TG-alerts once per escalating tier (yellow <=3d, orange <=24h, red expired);
+    # self-deduped inside the script (escalate-only, resets on re-login). Fully
+    # ISOLATED + fail-open: never gates liveness or crashes the tick.
+    param([switch]$AsDryRun)
+    try {
+        $seScript = Join-Path $repo 'tools\v2\session_expiry_monitor.py'
+        if (-not (Test-Path $seScript)) { return }
+        $seArgs = @($seScript)
+        if ($AsDryRun) { $seArgs += '--dry-run' }
+        $env:PYTHONIOENCODING = 'utf-8'
+        $out = & $pyExe @seArgs 2>&1
+        if ($out) { Write-SupLog "session_expiry: $((@($out) | Select-Object -Last 1))" }
+    } catch {
+        Write-SupLog "session_expiry: swallowed exception (fail-open): $($_.Exception.Message)"
+    }
+}
+
 function Invoke-MonitorTick {
     # Optional app-health monitors folded into the supervisor (the only
     # restart/reboot-durable scheduler). OPT-IN via FEATURE_MONITORS=1 in .env.
@@ -359,6 +380,9 @@ try {
 
     # --- heartbeat: due-commitments surfacing (isolated) ----------------------
     Invoke-CommitmentsHeartbeat -AsDryRun:$DryRun
+
+    # --- login-session expiry watch (isolated; never gates liveness) ----------
+    Invoke-SessionExpiryMonitor -AsDryRun:$DryRun
 
     if ($action -eq 'none') {
         # Healthy: run the hourly-gated monitors here (never on the restart/
