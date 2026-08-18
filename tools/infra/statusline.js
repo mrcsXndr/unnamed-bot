@@ -86,6 +86,40 @@ function tgStatus() {
   }
 }
 
+// Subscription quota, read from the cache tools/v2/usage_probe.py writes.
+// NEVER probes here — the statusline renders on every keystroke-ish event and
+// must not make a network call. The supervisor refreshes the cache; if nothing
+// has, we show nothing rather than a stale number (a six-hour-old "40%" could
+// be a current 100%, which is the exact confusion this is meant to end).
+const USAGE_STATE = path.join(__dirname, '..', '..', 'memory', 'metrics', 'usage_state.json');
+const USAGE_MAX_AGE_MS = 30 * 60_000;
+
+function usageStatus() {
+  try {
+    const s = JSON.parse(fs.readFileSync(USAGE_STATE, 'utf8'));
+    if (Date.now() / 1000 - (s.ts || 0) > USAGE_MAX_AGE_MS / 1000) return '';
+    const u5 = s.five_h?.utilization, u7 = s.seven_d?.utilization;
+    if (u5 == null && u7 == null) return '';
+    const p = v => {
+      if (v == null) return '?';
+      const n = v * 100;
+      return (Math.abs(n - Math.round(n)) < 0.05 ? n.toFixed(0) : n.toFixed(1)) + '%';
+    };
+    // Colour on the window that's furthest along — that's the one that stops us.
+    const worst = Math.max(u5 ?? 0, u7 ?? 0);
+    const dot = worst >= 0.9 ? '\u{1F534}' : worst >= 0.75 ? '\u{1F7E1}' : '\u{1F7E2}';
+    // Clock of the next reset, so the number on screen is actionable without
+    // opening anything: "how much is gone" and "when does it come back".
+    const nextReset = [s.five_h?.reset, s.seven_d?.reset].filter(Boolean).sort((a, b) => a - b)[0];
+    const hhmm = nextReset
+      ? new Date(nextReset * 1000).toTimeString().slice(0, 5)
+      : '';
+    return `${dot}${p(u5)}/${p(u7)}` + (hhmm ? `↻${hhmm}` : '');
+  } catch (e) {
+    return '';
+  }
+}
+
 let d = '';
 process.stdin.on('data', c => d += c);
 process.stdin.on('end', () => {
@@ -109,7 +143,7 @@ process.stdin.on('end', () => {
     const costEur = getCachedCost();
     const costStr = costEur >= 1000 ? `\u20ac${(costEur/1000).toFixed(1)}k` : `\u20ac${costEur.toFixed(0)}`;
 
-    console.log([m, dir + (g ? ' ' + g : ''), bar, costStr, tgStatus()].filter(Boolean).join(' | '));
+    console.log([m, dir + (g ? ' ' + g : ''), bar, costStr, usageStatus(), tgStatus()].filter(Boolean).join(' | '));
   } catch (e) {
     console.log('...');
   }

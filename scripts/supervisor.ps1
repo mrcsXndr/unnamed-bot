@@ -238,6 +238,31 @@ function Invoke-SessionExpiryMonitor {
     }
 }
 
+function Invoke-UsageProbe {
+    # Live subscription-quota probe: refresh memory/metrics/usage_state.json (which
+    # the statusline reads) and TG-warn on a threshold crossing. PROACTIVE, unlike
+    # transcript-banner detection, which only fires once the session is already dark.
+    #
+    # Costs one ~9-token Haiku call, and usage_probe.py throttles itself to at most
+    # one call per 5 min, so a 3-min tick cannot turn the quota check into its own
+    # traffic. The statusline reads the cache only, never the network.
+    # Fully ISOLATED + fail-open: never gates liveness.
+    param([switch]$AsDryRun)
+    try {
+        $upScript = Join-Path $repo 'tools\v2\usage_probe.py'
+        if (-not (Test-Path $upScript)) { return }
+        $upArgs = @($upScript, 'probe')
+        # --warn sends the TG threshold alert; skip it on a dry run so a diagnostic
+        # pass can never message the operator.
+        if (-not $AsDryRun) { $upArgs += '--warn' }
+        $env:PYTHONIOENCODING = 'utf-8'
+        $out = & $pyExe @upArgs 2>&1
+        if ($out) { Write-SupLog "usage_probe: $((@($out) | Select-Object -Last 1))" }
+    } catch {
+        Write-SupLog "usage_probe: swallowed exception (fail-open): $($_.Exception.Message)"
+    }
+}
+
 function Invoke-MonitorTick {
     # Optional app-health monitors folded into the supervisor (the only
     # restart/reboot-durable scheduler). OPT-IN via FEATURE_MONITORS=1 in .env.
@@ -383,6 +408,10 @@ try {
 
     # --- login-session expiry watch (isolated; never gates liveness) ----------
     Invoke-SessionExpiryMonitor -AsDryRun:$DryRun
+
+    # --- live quota probe (isolated; never gates liveness). Keeps the statusline
+    # number fresh and warns BEFORE the wall. Self-throttled to one API call/5min.
+    Invoke-UsageProbe -AsDryRun:$DryRun
 
     if ($action -eq 'none') {
         # Healthy: run the hourly-gated monitors here (never on the restart/

@@ -42,5 +42,8 @@ memory/sessions/*/
 memory/timelines/
 memory/metrics/*.csv
 memory/metrics/*.log
+# Runtime state (quota cache, limit windows) — this machine's numbers,
+# meaningless in a clone, so DATA-FREE covers these too.
+memory/metrics/*.json
 !memory/sessions/README.md
 !memory/**/.gitkeep

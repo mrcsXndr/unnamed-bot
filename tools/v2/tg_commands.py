@@ -16,6 +16,7 @@ Supported commands:
   /timeline          — current critic timeline (head)
   /compact           — distill journal → timeline + checkpoint marker
   /tasks             — read top items from task board
+  /usage             — live quota: exact %% used + absolute reset timestamps
   /update            — update Claude Code; self-restart the bot if a new version landed
   /help              — list commands
 
@@ -31,6 +32,8 @@ import os
 import shlex
 import subprocess
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -229,6 +232,47 @@ def cmd_costs(args: list[str], reply_to: str | None) -> int:
     return _send_tg(body, reply_to)
 
 
+def cmd_usage(args: list[str], reply_to: str | None) -> int:
+    """Live subscription quota: exact utilisation + the absolute reset timestamp.
+
+    Reads the anthropic-ratelimit-unified-* response headers via usage_probe.py.
+    `--force` so an explicit ask always gets current numbers rather than the
+    <=5-min cache the statusline and supervisor share.
+    """
+    try:
+        r = subprocess.run(
+            [PY_EXE, str(REPO_ROOT / "tools" / "v2" / "usage_probe.py"), "probe", "--force", "--json"],
+            capture_output=True, text=True, timeout=45, encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        )
+        u = json.loads((r.stdout or "{}").strip() or "{}")
+    except Exception as e:
+        return _send_tg(f"usage: probe failed ({e})", reply_to)
+
+    def _line(label, d):
+        util = d.get("utilization")
+        if util is None:
+            return None
+        reset = d.get("reset", 0)
+        mins = int((reset - time.time()) / 60)
+        when = "now" if mins <= 0 else (f"{mins}m" if mins < 90 else f"{mins // 60}h{mins % 60:02d}m")
+        stamp = datetime.fromtimestamp(reset).astimezone().strftime("%Y-%m-%d %H:%M %Z") if reset else "?"
+        v = util * 100
+        pct = f"{v:.0f}%" if abs(v - round(v)) < 0.05 else f"{v:.1f}%"
+        bar = "█" * round(util * 10) + "░" * (10 - round(util * 10))
+        return f"`{label:<7}{bar} {pct:>6}`\n   resets **{stamp}** (in {when})"
+
+    rows = [x for x in (_line("5-hour", u.get("five_h") or {}),
+                        _line("weekly", u.get("seven_d") or {})) if x]
+    if not rows:
+        return _send_tg("usage: live quota unavailable right now.", reply_to)
+    out = ["**Claude usage**"] + rows
+    if u.get("overage") == "rejected":
+        out.append("_Overage is off, so the cap is a hard stop — not extra spend._")
+    out.append("_Warns at 80/90/97%._")
+    return _send_tg("\n".join(out), reply_to)
+
+
 def cmd_help(args: list[str], reply_to: str | None) -> int:
     body = (
         "**TG slash commands**\n"
@@ -252,6 +296,7 @@ HANDLERS = {
     "/compact": cmd_compact,
     "/tasks": cmd_tasks,
     "/costs": cmd_costs,
+    "/usage": cmd_usage,
     "/update": cmd_update,
     "/help": cmd_help,
 }
