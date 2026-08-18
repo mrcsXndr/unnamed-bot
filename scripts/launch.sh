@@ -35,11 +35,9 @@ case "${1:-}" in
   --fresh)    MODE="fresh"; shift ;;
 esac
 
-# --- optional: pull secrets/settings + repo (opt-in) -------------------------
-if feature_on FEATURE_SECRETS_BACKUP && [ -f tools/infra/sync_settings.sh ]; then
-  echo "Syncing settings from backup folder..."
-  bash tools/infra/sync_settings.sh pull 2>/dev/null || true
-fi
+# --- repo pull (opt-in) ------------------------------------------------------
+# No secrets pull on launch: it silently overwrites freshly-fixed local files
+# with stale backup copies. Restore is manual — see sync_settings.sh.
 if feature_on FEATURE_MEMORY_SYNC; then
   git pull --rebase --autostash >/dev/null 2>&1 || true
 fi

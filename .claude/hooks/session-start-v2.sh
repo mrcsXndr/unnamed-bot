@@ -20,10 +20,12 @@ export PYTHONIOENCODING=utf-8
 # Invalidate statusline cost cache so it recalculates this session
 rm -f "$HOME/.claude/api_cost_cache.json" 2>/dev/null
 
-# Optional: pull secrets/settings from a sync folder (opt-in via .env)
-if grep -qsE '^FEATURE_SECRETS_BACKUP=1' "$REPO/.env" 2>/dev/null; then
-  bash "$REPO/tools/infra/sync_settings.sh" pull >/dev/null 2>&1 || true
-fi
+# NO automatic secrets pull here — deliberate. An auto-pull on every session
+# start overwrites freshly-fixed local files with stale backup copies, and it
+# does so silently: a bug you fixed locally gets re-imported on the next launch
+# and looks like it never got fixed. The backup folder is a BACKUP, not a source
+# of truth. Restore is manual and on-demand:
+#     bash tools/infra/sync_settings.sh pull
 
 # --- Cross-session recall index -------------------------------------------
 # Refresh the FTS5 recall index so the Director can do zero-LLM cross-session

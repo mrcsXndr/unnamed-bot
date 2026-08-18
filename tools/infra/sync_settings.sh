@@ -61,6 +61,22 @@ check_drive() {
 }
 
 do_push() {
+  # OFF BY DEFAULT — deliberate. This copies PLAINTEXT secrets (.env, OAuth
+  # client secrets and tokens, bot tokens, device credentials) to a cloud drive
+  # folder on a timer. That is a standing exposure the moment the drive account
+  # is shared, synced to a second machine, or compromised, and the value it buys
+  # — disaster recovery — is only worth it if the copy is encrypted. A
+  # non-idempotent copy in an earlier revision also splattered one credential
+  # set across ~167 duplicate drive folders before anyone noticed.
+  #
+  # The gate lives at the top of do_push rather than at the call sites so that
+  # FORCE=1 cannot bypass it and any manual invocation is covered too. Turn it
+  # on only for a deliberate one-off, and prefer an encrypted-at-rest backup
+  # (age, git-crypt) committed to the bot's own repo instead.
+  if [ "${BOT_DRIVE_SECRET_SYNC:-0}" != "1" ]; then
+    log "push disabled — drive secret sync is off (BOT_DRIVE_SECRET_SYNC=1 to override)"
+    return 0
+  fi
   # Self-gate: skip if a push ran within PUSH_MIN_INTERVAL (unless FORCE=1).
   if [ "${FORCE:-0}" != "1" ] && [ -f "$PUSH_TS_FILE" ]; then
     local last now age; last=$(cat "$PUSH_TS_FILE" 2>/dev/null || echo 0); now=$(date +%s)

@@ -36,7 +36,7 @@ tools/
 | `tools/infra/sanitize.py` | Anti-prompt-injection sanitiser for all external content | standalone |
 | `tools/infra/slack.sh` | Slack (channels/dms/history/search/unread) | Slack API (xoxp token) |
 | `tools/infra/cloudflare_ops.py` | Cloudflare DNS/SSL/cache management | standalone |
-| `tools/infra/sync_settings.sh` | Mirror secrets to a cloud/USB folder (opt-in) | standalone |
+| `tools/infra/sync_settings.sh` | Mirror secrets to a cloud/USB folder (**push OFF by default** — plaintext secrets off-box; `BOT_DRIVE_SECRET_SYNC=1` to override. Pull is manual DR only) | standalone |
 
 The Google tools are OPTIONAL: if `FEATURE_GOOGLE` is 0 or `credentials.json`
 is absent, skip them cleanly — don't retry or complain.
