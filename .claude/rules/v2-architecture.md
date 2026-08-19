@@ -104,6 +104,7 @@ session start/stop never breaks.
 | `/timeline` | Current distilled timeline |
 | `/compact` | Distill journal → timeline + write checkpoint marker |
 | `/tasks` | Top 30 rows of the task board sheet (needs TASK_BOARD_SHEET_ID) |
+| `/board` | GitHub Projects v2 kanban: render / move / set / add / poll (needs GH_PROJECT_OWNER + GH_PROJECT_NUMBER — see `task-board.md`) |
 | `/costs [Nd]` | Per-session cost rollup from sessions.csv |
 | `/update` | Update Claude Code; self-restart if a new version landed (`dry-run`/`check` are safe) |
 | `/help` | List commands |

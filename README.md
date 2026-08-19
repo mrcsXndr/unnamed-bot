@@ -106,6 +106,7 @@ docs/SETUP.md          ← setup guide, feature matrix, cross-platform notes
 | Supervisor / watchdog / monitors (Windows) | `scripts/register-supervisor.ps1` (+ `FEATURE_MONITORS=1`) |
 | Voice-note transcription | `GROQ_API_KEY` |
 | Task board `/tasks` command | `TASK_BOARD_SHEET_ID` |
+| GitHub Projects kanban `/board` | `GH_PROJECT_OWNER` + `GH_PROJECT_NUMBER` |
 
 Flip flags in `.env` any time; every hook checks them and no-ops when off.
 Details: [docs/SETUP.md](docs/SETUP.md#opt-in-feature-matrix).

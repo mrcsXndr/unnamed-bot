@@ -16,6 +16,7 @@ Supported commands:
   /timeline          — current critic timeline (head)
   /compact           — distill journal → timeline + checkpoint marker
   /tasks             — read top items from task board
+  /board             — GitHub Projects v2 kanban board (render / move / set / …)
   /usage             — live quota: exact %% used + absolute reset timestamps
   /update            — update Claude Code; self-restart the bot if a new version landed
   /help              — list commands
@@ -39,7 +40,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PY_EXE = sys.executable or "python"
 
-KNOWN = {"/status", "/journal", "/timeline", "/compact", "/tasks", "/update", "/help"}
+KNOWN = {"/status", "/journal", "/timeline", "/compact", "/tasks", "/board",
+         "/update", "/help"}
 
 
 def _send_tg(text: str, reply_to: str | None = None) -> int:
@@ -180,6 +182,86 @@ def cmd_tasks(args: list[str], reply_to: str | None) -> int:
         return _send_tg(f"/tasks failed: {e}", reply_to)
 
 
+_BOARD_MUTATORS = {"move", "set", "add", "edit", "sync"}
+
+
+def _board_env() -> dict:
+    """Subprocess env for gh_projects.py: PYTHONIOENCODING + the GH_PROJECT_*
+    config. The bot process doesn't load the repo .env into its environment, so
+    fill any missing GH_PROJECT* var (owner/number/type + optional token) from
+    the .env file. Anything already in os.environ wins."""
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+    envfile = REPO_ROOT / ".env"
+    if envfile.exists():
+        try:
+            for line in envfile.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if not s or s.startswith("#") or "=" not in s:
+                    continue
+                k, v = s.split("=", 1)
+                k = k.strip()
+                if k.startswith("GH_PROJECT") and not env.get(k):
+                    env[k] = v.strip()
+        except Exception:
+            pass
+    return env
+
+
+def cmd_board(args: list[str], reply_to: str | None) -> int:
+    """The task board, live in TG — backed by GitHub Projects v2 (gh_projects.py).
+
+    Bare `/board` renders it; the other subcommands pass straight through to the
+    client. After a mutating edit we append the refreshed board so the reply
+    shows both the confirmation and the new state.
+    """
+    script = str(REPO_ROOT / "tools" / "v2" / "gh_projects.py")
+    env = _board_env()
+
+    sub = args[0].lower() if args else ""
+    if sub in ("help", "-h", "--help"):
+        body = (
+            "**/board — task board** (GitHub Projects v2)\n"
+            "• `/board` — show the board (grouped by Status)\n"
+            "• `/board move <item> \"<status>\"` — set the Status column\n"
+            "• `/board set <item> Priority P1` · `/board set <item> Size M`\n"
+            "• `/board add \"<title>\" \"<body>\"` — new draft card\n"
+            "• `/board poll` — report status changes since the last snapshot\n"
+            "_item = a unique title-substring or the item id. Views (columns) are UI-only — the API can't create them._"
+        )
+        return _send_tg(body, reply_to)
+
+    if not env.get("GH_PROJECT_OWNER") or not env.get("GH_PROJECT_NUMBER"):
+        return _send_tg(
+            "/board: no project configured. Set `GH_PROJECT_OWNER` and "
+            "`GH_PROJECT_NUMBER` in `.env` (plus `GH_PROJECT_TYPE=org` for an "
+            "org board), then run `gh_projects.py init`.", reply_to)
+
+    if not args or sub in ("show", "render", "list"):
+        cli = [PY_EXE, script, "render"]
+    else:
+        cli = [PY_EXE, script] + args
+
+    try:
+        r = subprocess.run(cli, capture_output=True, text=True, timeout=45,
+                           encoding="utf-8", env=env)
+    except Exception as e:
+        return _send_tg(f"/board failed: {e}", reply_to)
+
+    out = (r.stdout or r.stderr or "(no output)").strip()
+
+    # After an edit, append the refreshed board so the operator sees the new state.
+    if sub in _BOARD_MUTATORS and r.returncode == 0:
+        try:
+            rr = subprocess.run([PY_EXE, script, "render"], capture_output=True,
+                                text=True, timeout=45, encoding="utf-8", env=env)
+            if rr.stdout:
+                out = f"✅ {out}\n\n{rr.stdout.strip()}"
+        except Exception:
+            pass
+
+    return _send_tg(out, reply_to)
+
+
 def cmd_update(args: list[str], reply_to: str | None) -> int:
     """Update Claude Code and self-restart the bot IF a new version landed.
 
@@ -281,6 +363,7 @@ def cmd_help(args: list[str], reply_to: str | None) -> int:
         "• `/timeline` — current distilled timeline\n"
         "• `/compact` — distill journal → timeline + checkpoint\n"
         "• `/tasks` — top 30 task board rows\n"
+        "• `/board` — GitHub Projects kanban board (`/board help` for subcommands)\n"
         "• `/costs [Nd]` — per-session cost rollup (optional last-N-days filter)\n"
         "• `/update` — update Claude Code; self-restart the bot if a new version landed\n"
         "  (`/update dry-run` and `/update check` are safe, no restart)\n"
@@ -295,6 +378,7 @@ HANDLERS = {
     "/timeline": cmd_timeline,
     "/compact": cmd_compact,
     "/tasks": cmd_tasks,
+    "/board": cmd_board,
     "/costs": cmd_costs,
     "/usage": cmd_usage,
     "/update": cmd_update,

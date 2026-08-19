@@ -63,6 +63,7 @@ Everything lands in `.env` (gitignored). The feature flags are plain
 | TG watchdog (Windows) | scheduled task via `scripts/register-tg-watchdog.ps1` | standalone poller auto-heal if you DON'T want the full supervisor | off |
 | Voice transcription | `GROQ_API_KEY` in `.env` | Telegram voice notes → text via Whisper | off |
 | Task board | `TASK_BOARD_SHEET_ID` in `.env` | `/tasks` TG command reads a Google Sheet | off |
+| Kanban board | `GH_PROJECT_OWNER` + `GH_PROJECT_NUMBER` in `.env`, then `gh_projects.py init` | `/board` TG command over a GitHub Project (v2) — drag-drop from a phone ([rules](../.claude/rules/task-board.md)) | off |
 | Slack / Cloudflare / GitLab / Resend | keys in `.env` | optional CLI helpers under `tools/infra/` | off |
 
 Nothing GitHub- or backup-related runs unless you opt in. Every hook is

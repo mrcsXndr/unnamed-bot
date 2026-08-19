@@ -18,6 +18,11 @@ Lead with action, not preamble. Ship fast, fix forward.
 ## Task tracking (source of truth)
 - The **Director's Journal** (`tools/v2/journal.py`) + **Commitments store**
   (`tools/v2/commitments.py`) carry open items across sessions.
+- Optional: a **GitHub Project (v2)** kanban board — set `GH_PROJECT_OWNER` +
+  `GH_PROJECT_NUMBER` in `.env`, run `tools/v2/gh_projects.py init`, and the
+  `/board` TG command works. Cards are draggable from a phone; hand decisions
+  and approvals off as cards rather than chat messages. See
+  `.claude/rules/task-board.md`.
 - Optional: a Google Sheet task board — create one, put its ID in `.env` as
   `TASK_BOARD_SHEET_ID` (tab `Tasks`), and the `/tasks` TG command works.
 - New actionable items from any source (Telegram, email, calendar, repo work)
@@ -108,7 +113,7 @@ sessions only for migrations, intentional resets, or harness debugging.
 - **A status footer is appended automatically** to every send. Don't add your
   own; disable per-message with `--no-status` or globally `BOT_TG_STATUS=0`.
 - Inbound `/commands` (`/status`, `/journal`, `/timeline`, `/compact`,
-  `/tasks`, `/costs`, `/update`, `/help`) are intercepted by a hook and never
+  `/tasks`, `/board`, `/costs`, `/update`, `/help`) are intercepted by a hook and never
   reach you — see `.claude/rules/v2-architecture.md`.
 - Keep replies mobile-concise.
 
@@ -116,6 +121,7 @@ sessions only for migrations, intentional resets, or harness debugging.
 All workflow-specific rules are in `.claude/rules/`:
 - `identity.md` — communication style
 - `tools.md` — CLI tool reference and execution rules
+- `task-board.md` — optional GitHub Projects v2 kanban board (`/board`)
 - `browser.md` — browser automation via `tools/browser/ab.sh` (agent-browser, isolated Chrome)
 - `telegram.md` — Telegram bridge, ack-first orchestration, single-poller invariant
 - `security.md` — anti-prompt-injection defense

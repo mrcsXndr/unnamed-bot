@@ -28,6 +28,11 @@ memory/index/
 memory/commitments.json
 memory/*.lock
 memory/**/*.lock
+# GitHub Projects board state: the cached field/option ids, the poll snapshot,
+# and any local board mirror all describe YOUR board, not the template's.
+memory/tasks/gh_project.json
+memory/tasks/gh_project.snapshot.json
+memory/tasks/board.json
 tools/infra/.resource_monitor_state.json
 scripts/supervisor-hidden.vbs
 
