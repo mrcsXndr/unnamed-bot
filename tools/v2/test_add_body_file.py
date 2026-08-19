@@ -11,8 +11,13 @@ reads are eventually consistent, so an `edit` fired immediately after an `add`
 often cannot see the new item and dies with "no unique item", leaving a card on
 the board with a placeholder body.
 
-Mutation-proved: with the `--body-file` branch removed from `add`, all four
-cases go red — the body becomes the literal string "--body-file".
+Mutation-proved, and the split is deliberate. With the `--body-file` branch
+removed from `add`, exactly 3 of the 6 checks go red: the body arrives as the
+literal string "--body-file", the missing-value case exits 0 instead of 2, and a
+half-card gets created from bad args. The other 3 stay GREEN on purpose — they
+are controls covering the paths the branch must not disturb (positional body,
+empty body, and the exit code itself). If a control also reddened, this suite
+would be measuring the signature change rather than the behaviour.
 
 Stubs add_draft/load_cfg; never touches the network or a live board.
 """
