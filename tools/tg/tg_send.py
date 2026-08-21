@@ -288,6 +288,22 @@ def main() -> int:
         except Exception:
             pass
 
+    # Global mute. A test that drives a code path with a real send in it
+    # messages a real person, and that is not hypothetical: a usage-limit
+    # resume test called the live resume path four times in one afternoon and
+    # put four identical alerts on the operator's phone. The test isolated the
+    # STATE file it wrote and even asserted the isolation had landed — it never
+    # isolated the SEND, because nobody had listed the send as a side effect.
+    #
+    # A per-test stub is still the right thing to write. This is the floor
+    # underneath it, for the stub a future test forgets: set BOT_TG_MUTE=1 and
+    # nothing reaches the API, whatever the caller does. Deliberately at THIS
+    # layer, because every tool in the repo sends through here — one guard
+    # covers the monitors, the schedulers and anything added later.
+    if (os.environ.get("BOT_TG_MUTE") or env.get("BOT_TG_MUTE") or "0") == "1":
+        print("[BOT_TG_MUTE] suppressed TG send:\n" + text[:2000], file=sys.stderr)
+        return 0
+
     token = env.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = args.chat_id or env.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
