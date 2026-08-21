@@ -79,8 +79,37 @@ $ff = Get-Process -Name ffmpeg -EA SilentlyContinue
 if (@($ff).Count -gt 0) { Add-Issue 'info' 'pipeline' "$(@($ff).Count) ffmpeg proc(s) — stray if no capture running" }
 
 # --- duplicate bot sessions / pollers (single-poller invariant) ---
-$claudeCount = @(Get-Process -Name claude -EA SilentlyContinue).Count
-if ($claudeCount -gt 1) { Add-Issue 'warn' 'bot' "$claudeCount claude procs — duplicate session / dual-poller risk" }
+# ASK THE QUESTION THE CHECK IS ACTUALLY FOR: does more than one process hold
+# the Telegram poll slot? That is decided by how a claude was LAUNCHED, not by
+# how many exist. A headless worker cannot dual-poll no matter who spawned it,
+# and this bot spawns them routinely — every subagent, every `-p` one-shot,
+# every agent a build pipeline fans out. Counting processes made a busy bot
+# look like a broken one, and a warning that fires on normal operation is a
+# warning nobody reads.
+#
+# Two launch shapes can start the bridge: an explicit
+# `--channels plugin:telegram@…`, and a `--settings` pointing at the tracked
+# tg-enable file, because current CC auto-starts the bridge from
+# `enabledPlugins` in ANY loaded settings file. Match both. Anything else is a
+# worker, reported as info so the count stays visible without being an alarm.
+#
+# The residual case — a bridge enabled through some other settings path — is
+# what tg_watchdog's getUpdates-409 probe is for. This check does not need to
+# be the last line of defence; it needs to stop crying wolf.
+$allClaude = @(Get-Process -Name claude -EA SilentlyContinue)
+$claudeCount = 0
+if ($allClaude.Count -gt 0) {
+  $byPid = @{}
+  Get-CimInstance Win32_Process -Filter "Name='claude.exe'" -EA SilentlyContinue |
+    ForEach-Object { $byPid[[int]$_.ProcessId] = $_.CommandLine }
+  foreach ($c in $allClaude) {
+    $cl = [string]$byPid[[int]$c.Id]
+    if ($cl -match '--channels' -or $cl -match 'tg-enable\.settings\.json') { $claudeCount++ }
+  }
+}
+$claudeWorkers = $allClaude.Count - $claudeCount
+if ($claudeCount -gt 1) { Add-Issue 'warn' 'bot' "$claudeCount claude procs hold a TG bridge — duplicate session / dual-poller risk" }
+if ($claudeWorkers -gt 0) { Add-Issue 'info' 'bot' "$claudeWorkers headless claude worker(s) — no TG bridge, cannot dual-poll" }
 
 # --- stray node dev servers (vite left running) ---
 $nodeCount = @(Get-Process -Name node -EA SilentlyContinue).Count
