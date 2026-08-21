@@ -64,6 +64,10 @@ rolls it up from your phone.
 exactly one healthy instance alive: cold-start at logon, heal a dead Telegram
 poller, resurface due commitments, kill orphaned automation browsers. Plus a
 safe self-restart flow so `/update` from your phone actually works.
+`tools/v2/health_sweep.py` is the read side of that, for the bot rather than
+for you: one zero-LLM pass over every signal, as PASS/FAIL lines the director
+can act on, so a self-check prompts a fix instead of producing yet another
+notification.
 
 **6. Security posture out of the box.** Anti-prompt-injection sanitizer on all
 external content, memory-channel sanitization at session start, hard-denied
@@ -81,7 +85,7 @@ CLAUDE.md              ← the bot's soul file (personalize me)
   commands/, skills/   ← /critic, /morning, /eod, productivity skills
 tools/
   v2/                  ← journal, timeline, recall, commitments, cost meter,
-                         tg_commands, tg_watchdog, safe_write, sanitize_chunk …
+                         health_sweep, tg_commands, tg_watchdog, safe_write …
   tg/                  ← tg_send.py + photo/document/video + voice transcription
   browser/ab.sh        ← agent-browser (isolated Chrome) automation
   google/              ← calendar / gmail / tasks / sheets / drive (optional)
