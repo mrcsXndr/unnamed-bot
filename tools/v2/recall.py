@@ -38,6 +38,7 @@ rest of the index still builds.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -48,6 +49,29 @@ SESSIONS_DIR = REPO_ROOT / "memory" / "sessions"
 TIMELINES_DIR = REPO_ROOT / "memory" / "timelines"
 INDEX_DIR = REPO_ROOT / "memory" / "index"
 DB_PATH = INDEX_DIR / "recall.db"
+
+
+def _default_memory_dir() -> Path:
+    """Claude Code's auto-memory dir for THIS project. CC derives the folder
+    name from the project path by replacing ':' and both slashes with '-'
+    (so `C:\\Users\\x\\Code\\bot` -> `C--Users-x-Code-bot` — the ':' and the
+    following separator each contribute one dash, which is where the double
+    dash comes from). Overridable with BOT_MEMORY_DIR."""
+    override = os.environ.get("BOT_MEMORY_DIR")
+    if override:
+        return Path(override)
+    slug = re.sub(r"[:\\/]", "-", str(REPO_ROOT))
+    return Path.home() / ".claude" / "projects" / slug / "memory"
+
+
+MEMORY_DIR = _default_memory_dir()
+# [[slug]] wiki-links are the edges of the memory graph.
+MEMORY_LINK_RE = re.compile(r"\[\[([A-Za-z0-9][A-Za-z0-9._-]*)\]\]")
+# Cap what a single hit can drag in. A mature memory dir is densely linked
+# (~3 links per file on the reference deployment); an uncapped 1-hop expansion
+# on a hub node would flood the Director's context with the very re-reading
+# recall exists to avoid.
+MEMORY_NEIGHBOUR_CAP = 6
 
 
 def _sanitize_snippet(text: str) -> str:
@@ -72,7 +96,6 @@ def _sanitize_snippet(text: str) -> str:
         return cleaned
     except Exception:
         return text
-
 
 # Reverse of journal.py KINDS: section header -> kind key.
 SECTION_TO_KIND = {
@@ -143,6 +166,30 @@ def _init_schema(con: sqlite3.Connection) -> None:
     _migrate_trust_columns(con)
     con.execute("CREATE INDEX IF NOT EXISTS idx_entries_src ON entries(source_path, seq);")
     con.execute("CREATE INDEX IF NOT EXISTS idx_entries_sess ON entries(session_id, seq);")
+    # The memory graph. One auto-memory file = one node = one entries row; its
+    # [[slug]] wiki-links are the edges. Kept in their own tables (not folded
+    # into entries) because an edge can point at a slug that has no file yet —
+    # a dangling link is a real, queryable state, not a broken row.
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_files (
+            name        TEXT PRIMARY KEY,
+            source_path TEXT NOT NULL,
+            description TEXT
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_links (
+            src TEXT NOT NULL,
+            dst TEXT NOT NULL,
+            PRIMARY KEY (src, dst)
+        )
+        """
+    )
+    con.execute("CREATE INDEX IF NOT EXISTS idx_memfiles_src ON memory_files(source_path);")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_memlinks_dst ON memory_links(dst);")
     # FTS5 external-content table mirroring entries.text, with triggers to
     # keep it in sync. content_rowid ties fts rows to entries.id.
     con.execute(
@@ -269,6 +316,63 @@ def _parse_timeline(text: str, session_fallback: str) -> list[dict]:
     return out
 
 
+_FM_FIELD_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*?)\s*$")
+
+
+def _parse_memory(text: str, fallback_name: str) -> dict:
+    """Parse one auto-memory file into a graph node.
+
+    Returns {name, description, ts, session_id, links[], entry}. A memory file
+    is ONE fact, so it is ONE entry — unlike a journal, where each bullet is
+    its own row. Splitting it per-paragraph would make the '**Why:**' line
+    rank as a separate, contextless hit.
+    """
+    name = fallback_name
+    description = ""
+    ts = None
+    session_id = "memory"
+    body = text
+
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            fm = text[3:end]
+            body = text[end + 4:]
+            for line in fm.splitlines():
+                m = _FM_FIELD_RE.match(line)
+                if not m:
+                    continue
+                key, val = m.group(1), m.group(2).strip().strip('"').strip("'")
+                if not val:
+                    continue
+                if key == "name":
+                    name = val
+                elif key == "description":
+                    description = val
+                elif key == "modified":
+                    ts = val
+                elif key == "originSessionId":
+                    session_id = val
+
+    # Edges come from the BODY only: a slug in the front-matter would make a
+    # node link to itself, and `name:` is the node, not an edge.
+    links = sorted({m.group(1) for m in MEMORY_LINK_RE.finditer(body)} - {name})
+
+    flat = re.sub(r"\s+", " ", f"{description} {body}").strip()
+    return {
+        "name": name,
+        "description": description,
+        "links": links,
+        "entry": {
+            "session_id": session_id,
+            "kind": "memory",
+            "ts": ts,
+            "seq": 0,
+            "text": f"[{name}] {flat}" if flat else f"[{name}]",
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Indexing
 # ---------------------------------------------------------------------------
@@ -307,6 +411,53 @@ def _reindex_file(con: sqlite3.Connection, path: Path, entries: list[dict]) -> i
     return n
 
 
+def _reindex_memory_graph(con: sqlite3.Connection, path: Path, node: dict) -> None:
+    """Refresh one memory file's node + out-edges.
+
+    Keyed on source_path, not name, so renaming the `name:` field inside a file
+    replaces the old node instead of leaving a ghost behind. In-edges are not
+    touched: they belong to the files that wrote them.
+    """
+    src = str(path)
+    for (old_name,) in con.execute("SELECT name FROM memory_files WHERE source_path=?", (src,)).fetchall():
+        con.execute("DELETE FROM memory_links WHERE src=?", (old_name,))
+    con.execute("DELETE FROM memory_files WHERE source_path=?", (src,))
+    con.execute(
+        "INSERT INTO memory_files(name, source_path, description) VALUES(?,?,?) "
+        "ON CONFLICT(name) DO UPDATE SET source_path=excluded.source_path, "
+        "description=excluded.description",
+        (node["name"], src, node["description"]),
+    )
+    con.execute("DELETE FROM memory_links WHERE src=?", (node["name"],))
+    for dst in node["links"]:
+        con.execute("INSERT OR IGNORE INTO memory_links(src, dst) VALUES(?,?)", (node["name"], dst))
+
+
+def _prune_missing(con: sqlite3.Connection) -> int:
+    """Drop rows for source files that no longer exist.
+
+    Load-bearing for memory: a memory deleted because it turned out to be WRONG
+    must stop being recalled. Without this the FTS row outlives the file and the
+    Director keeps getting told the thing that was deleted for being false.
+    """
+    dropped = 0
+    for (src,) in con.execute("SELECT DISTINCT source_path FROM entries").fetchall():
+        if Path(src).exists():
+            continue
+        for (oid,) in con.execute("SELECT id FROM entries WHERE source_path=?", (src,)).fetchall():
+            con.execute(
+                "INSERT INTO entries_fts(entries_fts, rowid, text) "
+                "VALUES('delete', ?, (SELECT text FROM entries WHERE id=?))", (oid, oid)
+            )
+        con.execute("DELETE FROM entries WHERE source_path=?", (src,))
+        con.execute("DELETE FROM files WHERE source_path=?", (src,))
+        for (name,) in con.execute("SELECT name FROM memory_files WHERE source_path=?", (src,)).fetchall():
+            con.execute("DELETE FROM memory_links WHERE src=?", (name,))
+        con.execute("DELETE FROM memory_files WHERE source_path=?", (src,))
+        dropped += 1
+    return dropped
+
+
 def cmd_index(force: bool = False) -> int:
     con = _connect()
     if not _has_fts5(con):
@@ -325,6 +476,13 @@ def cmd_index(force: bool = False) -> int:
     if TIMELINES_DIR.exists():
         for tp in sorted(TIMELINES_DIR.glob("*.md")):
             targets.append((tp, "timeline"))
+    if MEMORY_DIR.exists():
+        for mp in sorted(MEMORY_DIR.glob("*.md")):
+            # MEMORY.md is the hand-written index of the others — indexing it
+            # would return the pointer instead of the fact it points at.
+            if mp.name == "MEMORY.md":
+                continue
+            targets.append((mp, "memory"))
 
     for path, ftype in targets:
         try:
@@ -334,7 +492,14 @@ def cmd_index(force: bool = False) -> int:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
             fallback = path.parent.name if ftype == "journal" else path.stem
-            entries = _parse_journal(text, fallback) if ftype == "journal" else _parse_timeline(text, fallback)
+            if ftype == "memory":
+                node = _parse_memory(text, fallback)
+                _reindex_memory_graph(con, path, node)
+                entries = [node["entry"]]
+            elif ftype == "journal":
+                entries = _parse_journal(text, fallback)
+            else:
+                entries = _parse_timeline(text, fallback)
             n = _reindex_file(con, path, entries)
             con.execute(
                 "INSERT INTO files(source_path, mtime) VALUES(?,?) "
@@ -349,10 +514,19 @@ def cmd_index(force: bool = False) -> int:
             con.rollback()
             continue
 
+    try:
+        pruned = _prune_missing(con)
+        con.commit()
+    except Exception as e:  # fail-open: a stale row beats a broken index
+        print(f"[recall] prune skipped: {e!r}", file=sys.stderr)
+        con.rollback()
+        pruned = 0
+
     print(json.dumps({
         "status": "indexed",
         "files_indexed": indexed_files,
         "files_skipped_unchanged": skipped,
+        "files_pruned_missing": pruned,
         "entries_indexed": indexed_entries,
         "db": str(DB_PATH),
     }))
@@ -382,6 +556,46 @@ def _window(con: sqlite3.Connection, hit: sqlite3.Row, radius: int) -> list[dict
         }
         for r in rows
     ]
+
+
+def _neighbours(con: sqlite3.Connection, source_path: str,
+                cap: int = MEMORY_NEIGHBOUR_CAP) -> list[dict]:
+    """1-hop neighbours of the memory node stored at `source_path`.
+
+    The window function gives a journal hit its temporal context; this gives a
+    memory hit its SEMANTIC context — the facts Marcus (or I) explicitly linked
+    to it. Zero LLM, one join. Out-edges first (this fact points there
+    deliberately), then in-edges, capped: a hub like [[tg-replies-max-5-lines]]
+    has far more than a Director needs in one recall.
+    """
+    row = con.execute("SELECT name FROM memory_files WHERE source_path=?", (source_path,)).fetchone()
+    if not row:
+        return []
+    name = row[0]
+    seen: set[str] = set()
+    out: list[dict] = []
+    for direction, sql in (
+        ("out", "SELECT dst FROM memory_links WHERE src=? ORDER BY dst"),
+        ("in", "SELECT src FROM memory_links WHERE dst=? ORDER BY src"),
+    ):
+        for (other,) in con.execute(sql, (name,)).fetchall():
+            if other == name or other in seen:
+                continue
+            seen.add(other)
+            meta = con.execute(
+                "SELECT description, source_path FROM memory_files WHERE name=?", (other,)
+            ).fetchone()
+            out.append({
+                "name": other,
+                "direction": direction,
+                # A dangling edge is reported, not hidden: it marks a fact that
+                # was linked but never written.
+                "description": (meta[0] if meta else None),
+                "exists": meta is not None,
+            })
+            if len(out) >= cap:
+                return out
+    return out
 
 
 def _run_search_query(con, query, limit, min_trust):
@@ -432,7 +646,7 @@ def cmd_search(query: str, limit: int = 8, radius: int = 2, as_json: bool = Fals
 
     results = []
     for r in rows:
-        results.append({
+        res = {
             "session_id": r["session_id"],
             "kind": r["kind"],
             "ts": r["ts"],
@@ -441,7 +655,10 @@ def cmd_search(query: str, limit: int = 8, radius: int = 2, as_json: bool = Fals
             "entry_id": r["id"],
             "source_path": str(Path(r["source_path"]).relative_to(REPO_ROOT)) if str(r["source_path"]).startswith(str(REPO_ROOT)) else r["source_path"],
             "window": _window(con, r, radius),
-        })
+        }
+        if r["kind"] == "memory":
+            res["neighbours"] = _neighbours(con, r["source_path"])
+        results.append(res)
 
     if as_json:
         print(json.dumps({"query": query, "count": len(results), "results": results}, indent=2))
@@ -460,6 +677,12 @@ def cmd_search(query: str, limit: int = 8, radius: int = 2, as_json: bool = Fals
             if len(txt) > 220:
                 txt = txt[:217] + "..."
             print(f"   {mark} {tsl}({w['kind']}) {txt}")
+        for nb in res.get("neighbours", []):
+            arrow = "->" if nb["direction"] == "out" else "<-"
+            desc = nb["description"] or "(no file yet)"
+            if len(desc) > 90:
+                desc = desc[:87] + "..."
+            print(f"    {arrow} [[{nb['name']}]] {desc}")
         print()
     return 0
 
@@ -515,6 +738,16 @@ def cmd_stats() -> int:
         n_sessions = con.execute("SELECT COUNT(DISTINCT session_id) FROM entries").fetchone()[0]
         n_files = con.execute("SELECT COUNT(*) FROM files").fetchone()[0]
         by_kind = {k: c for k, c in con.execute("SELECT kind, COUNT(*) FROM entries GROUP BY kind ORDER BY COUNT(*) DESC")}
+        n_nodes = con.execute("SELECT COUNT(*) FROM memory_files").fetchone()[0]
+        n_edges = con.execute("SELECT COUNT(*) FROM memory_links").fetchone()[0]
+        n_dangling = con.execute(
+            "SELECT COUNT(*) FROM memory_links l "
+            "WHERE NOT EXISTS (SELECT 1 FROM memory_files f WHERE f.name = l.dst)"
+        ).fetchone()[0]
+        n_orphan = con.execute(
+            "SELECT COUNT(*) FROM memory_files f "
+            "WHERE NOT EXISTS (SELECT 1 FROM memory_links l WHERE l.dst = f.name)"
+        ).fetchone()[0]
     except sqlite3.OperationalError:
         print(json.dumps({"status": "empty", "note": "run `recall.py index` first"}))
         return 0
@@ -523,23 +756,63 @@ def cmd_stats() -> int:
         "sessions": n_sessions,
         "files": n_files,
         "by_kind": by_kind,
+        "memory_graph": {
+            "nodes": n_nodes,
+            "edges": n_edges,
+            "dangling_edges": n_dangling,
+            "no_inbound": n_orphan,
+        },
         "db": str(DB_PATH),
     }, indent=2))
     return 0
 
 
+def cmd_neighbours(name: str, as_json: bool = False) -> int:
+    """Walk 1 hop from a named memory node. Uncapped — this is the explicit
+    'show me around this fact' command, unlike the capped expansion attached
+    to a search hit."""
+    con = _connect()
+    try:
+        row = con.execute(
+            "SELECT source_path, description FROM memory_files WHERE name=?", (name,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        print(json.dumps({"status": "empty", "note": "run `recall.py index` first"}))
+        return 1
+    if row is None:
+        print(json.dumps({"status": "not_found", "name": name}))
+        return 2
+    nbs = _neighbours(con, row[0], cap=10_000)
+    if as_json:
+        print(json.dumps({"name": name, "description": row[1],
+                          "source_path": row[0], "neighbours": nbs}, indent=2))
+        return 0
+    print(f"[[{name}]] {row[1] or ''}\n  ({row[0]})")
+    for nb in nbs:
+        arrow = "->" if nb["direction"] == "out" else "<-"
+        print(f"  {arrow} [[{nb['name']}]] {nb['description'] or '(no file yet)'}")
+    if not nbs:
+        print("  (no links either way)")
+    return 0
+
+
 USAGE = """\
-recall — FTS5 cross-session recall over session journals + timelines
+recall — FTS5 cross-session recall over session journals, timelines + memories
 
 Usage:
   recall.py index [--force]          build/refresh the index (mtime-gated)
   recall.py search "<query>" [--json] [--limit N] [--radius R] [--min-trust X]
+  recall.py neighbours <memory-name> [--json]
   recall.py feedback <entry_id> helpful|unhelpful
   recall.py stats
 
 Trust: each entry has a trust_score (default 0.5). search ranks by FTS5 rank
 then trust DESC and filters --min-trust; feedback nudges +0.05/-0.10 (clamped)
 so facts that proved wrong decay out of recall.
+
+Memory graph: the auto-memory files are indexed one node per file, and their
+[[slug]] links are edges. A search hit on a memory carries its 1-hop
+neighbours (capped); `neighbours` walks one node uncapped.
 
 Index: memory/index/recall.db (SQLite FTS5). Pure local, no LLM calls.
 """
@@ -576,6 +849,8 @@ def main(argv: list[str]) -> int:
                 except ValueError:
                     pass
         return cmd_search(query, limit=limit, radius=radius, as_json=as_json, min_trust=min_trust)
+    if cmd == "neighbours" and len(argv) >= 3:
+        return cmd_neighbours(argv[2], as_json="--json" in argv[3:])
     if cmd == "feedback" and len(argv) >= 4:
         try:
             entry_id = int(argv[2])

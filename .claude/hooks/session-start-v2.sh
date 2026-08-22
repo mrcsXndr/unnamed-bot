@@ -233,7 +233,7 @@ CONTEXT="$CONTEXT\n\n## v2 Context Channels\nSession ID: $SESSION_ID\nJournal: $
 if [ -n "$BUDGET_HEADER" ]; then
   CONTEXT="$CONTEXT\n\n### Memory budget (frozen snapshot at session start)\n$BUDGET_HEADER"
 fi
-CONTEXT="$CONTEXT\n\nCross-session recall: run \`python tools/v2/recall.py search \"<query>\"\` for zero-LLM FTS5 recall across ALL past session journals (no need to re-read them)."
+CONTEXT="$CONTEXT\n\nCross-session recall: run \`python tools/v2/recall.py search \"<query>\"\` for zero-LLM FTS5 recall across ALL past session journals AND the auto-memory files (no need to re-read them). A memory hit prints its 1-hop \`[[link]]\` neighbours; \`recall.py neighbours <slug>\` walks one node in full."
 if [ -n "$JOURNAL_BODY" ]; then
   CONTEXT="$CONTEXT\n\n### Director's Journal (working memory)\n$JOURNAL_BODY"
 fi
