@@ -80,6 +80,23 @@ fm_only = recall._parse_memory(
 )
 check(fm_only["links"] == ["real"], "edges come from the body, not the front-matter")
 
+# Code spans: a doc that MENTIONS the link syntax is not making a link. Both
+# real dangling edges in the live graph came from exactly this.
+spans = recall._parse_memory(
+    mem("spanner", "d", "Never write `[[memory-slug]]` here.\nBut [[real-one]] is an edge."),
+    "fb",
+)
+check(spans["links"] == ["real-one"], "an inline code span is not an edge")
+fenced = recall._parse_memory(
+    mem("fencer", "d", "```\nRelated: [[in-a-fence]]\n```\nBut [[outside]] counts."),
+    "fb",
+)
+check(fenced["links"] == ["outside"], "a fenced block is not an edge")
+check(
+    recall._parse_memory(mem("dbl", "d", "``[[double-tick]]`` and [[plain]]."), "fb")["links"] == ["plain"],
+    "a double-backtick span is not an edge",
+)
+
 bare = recall._parse_memory("Just a body, no front-matter at all. [[x]]\n", "fallback-slug")
 check(bare["name"] == "fallback-slug", "missing front-matter falls back to the filename stem")
 check(bare["links"] == ["x"], "links still parsed without front-matter")

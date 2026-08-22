@@ -67,6 +67,8 @@ def _default_memory_dir() -> Path:
 MEMORY_DIR = _default_memory_dir()
 # [[slug]] wiki-links are the edges of the memory graph.
 MEMORY_LINK_RE = re.compile(r"\[\[([A-Za-z0-9][A-Za-z0-9._-]*)\]\]")
+# Fenced blocks first (``` ... ```), then inline spans (`` ` `` runs).
+CODE_SPAN_RE = re.compile(r"```.*?```|`+[^`\n]*`+", re.S)
 # Cap what a single hit can drag in. A mature memory dir is densely linked
 # (~3 links per file on the reference deployment); an uncapped 1-hop expansion
 # on a hub node would flood the Director's context with the very re-reading
@@ -355,8 +357,12 @@ def _parse_memory(text: str, fallback_name: str) -> dict:
                     session_id = val
 
     # Edges come from the BODY only: a slug in the front-matter would make a
-    # node link to itself, and `name:` is the node, not an edge.
-    links = sorted({m.group(1) for m in MEMORY_LINK_RE.finditer(body)} - {name})
+    # node link to itself, and `name:` is the node, not an edge. Inline code
+    # spans are stripped first — a doc that MENTIONS the syntax (`[[slug]]` as
+    # an example) is talking about links, not making one, and that mention was
+    # showing up as a permanent dangling edge.
+    linkable = CODE_SPAN_RE.sub(" ", body)
+    links = sorted({m.group(1) for m in MEMORY_LINK_RE.finditer(linkable)} - {name})
 
     flat = re.sub(r"\s+", " ", f"{description} {body}").strip()
     return {
