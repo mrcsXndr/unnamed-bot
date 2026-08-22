@@ -24,7 +24,7 @@ CLI:
   gh_projects.py move  <item> "<status>"    # set the Status (column)
   gh_projects.py set   <item> <field> "<value>"    # e.g. set Priority P0 / Size L
   gh_projects.py add   "title" ["body"] | "title" --body-file <path>
-  gh_projects.py edit  <item> --body-file <path> [--title "<t>"]   # rewrite a card
+  gh_projects.py edit  <item> --body-file <path> [--title "<t>"] [--force]  # rewrite a card
   gh_projects.py sync                       # seed from memory/tasks/board.json
   gh_projects.py poll                       # diff vs last snapshot -> changes JSON
   gh_projects.py fields                     # dump discovered fields + options
@@ -179,7 +179,7 @@ query($owner:String!, $number:Int!, $cursor:String){
           id
           content{
             __typename
-            ... on DraftIssue { title }
+            ... on DraftIssue { title body }
             ... on Issue { title number url state }
             ... on PullRequest { title number url state }
           }
@@ -213,6 +213,12 @@ def list_items() -> list[dict]:
             out.append({
                 "id": n["id"],
                 "title": content.get("title", "(untitled)"),
+                # Draft-issue body. Present so a read can SEE what a card
+                # already says: without it, "the body is empty" is a claim the
+                # data cannot support, and `edit` blind-overwrites whatever was
+                # there. Real Issues keep their body in the issue and report
+                # None here.
+                "body": content.get("body"),
                 "url": content.get("url"),
                 "status": fv.get("Status"),
                 "priority": fv.get("Priority"),
@@ -312,7 +318,7 @@ def add_draft(cfg, title, body="") -> str:
 # "SUPERSEDED: …" pairs. Note the mutation takes the DraftIssue id, NOT the
 # project-item id the rest of this module passes around, so it is fetched first.
 _Q_DRAFT_ID = """
-query($id:ID!){ node(id:$id){ ... on ProjectV2Item { content { ... on DraftIssue { id } } } } }
+query($id:ID!){ node(id:$id){ ... on ProjectV2Item { content { ... on DraftIssue { id body } } } } }
 """
 
 _M_EDIT_DRAFT = """
@@ -324,12 +330,28 @@ mutation($id:ID!, $title:String, $body:String){
 """
 
 
-def edit_draft(item_id, title=None, body=None) -> str:
-    """Rewrite a draft card's body and/or title. Only draft cards, not issues."""
+def edit_draft(item_id, title=None, body=None, force=False) -> str:
+    """Rewrite a draft card's body and/or title. Only draft cards, not issues.
+
+    A body rewrite is DESTRUCTIVE and GitHub keeps NO version history for a
+    draft issue, so replacing a non-empty body refuses unless `force`. This
+    guard exists because the read path used not to fetch bodies at all: every
+    card read back blank, that blank was taken for emptiness, and an `edit`
+    silently destroyed a card nobody could recover. Look before you write, and
+    print what you are about to discard so it survives in the log.
+    """
     node = _gql(_Q_DRAFT_ID, id=item_id)["node"]
-    draft_id = ((node or {}).get("content") or {}).get("id")
+    content = (node or {}).get("content") or {}
+    draft_id = content.get("id")
     if not draft_id:
         raise RuntimeError(f"{item_id} is not a draft card (an issue's body lives in the issue)")
+    existing = (content.get("body") or "").strip()
+    if body is not None and existing and not force:
+        raise RuntimeError(
+            f"{item_id} already has a body ({len(existing)} chars) and GitHub keeps no history for it. "
+            f"Read it first, merge your text into it, and re-run with --force.\n"
+            f"--- current body ---\n{content.get('body')}\n--- end ---"
+        )
     kw = {"id": draft_id}
     if title is not None:
         kw["title"] = title
@@ -436,6 +458,12 @@ def poll() -> dict:
 
     Rewriting the snapshot here is what makes each change report exactly once,
     so a caller on a timer needs no extra cooldown of its own.
+
+    The snapshot also carries each card's BODY (list_items fetches it), which
+    makes this file a local mirror of every card. GitHub keeps no version
+    history for a draft issue, so without it the only copy of a card body lives
+    on github.com and a bad `edit` is unrecoverable. Poll on a timer and the
+    worst case becomes one tick of loss.
     """
     items = list_items()
     prev = {}
@@ -470,7 +498,9 @@ USAGE = """gh_projects.py — GitHub Projects v2 board client
   fields                            dump discovered fields + options
   add   "title" ["body"]            new draft card
   add   "title" --body-file <path>  new draft card, body from a file (preferred)
-  edit  <item> --body-file <path> [--title "<t>"]     rewrite a draft card
+  edit  <item> --body-file <path> [--title "<t>"] [--force]   rewrite a draft card
+                                                    (refuses to replace a NON-EMPTY
+                                                     body without --force)
   move  <item> "<status>"           set the Status column
   set   <item> <field> "<value>"    e.g. set Priority P0 / Size L
   sync                              seed from memory/tasks/board.json
@@ -532,7 +562,8 @@ def main(argv):
         if not it:
             print(f"no unique item for '{argv[2]}'", file=sys.stderr); return 2
         title = body = None
-        rest = argv[3:]
+        force = "--force" in argv[3:]
+        rest = [a for a in argv[3:] if a != "--force"]
         i = 0
         while i < len(rest):
             flag, val = rest[i], rest[i + 1] if i + 1 < len(rest) else None
@@ -549,7 +580,11 @@ def main(argv):
             i += 2
         if title is None and body is None:
             print("nothing to change", file=sys.stderr); return 2
-        edit_draft(it["id"], title=title, body=body)
+        try:
+            edit_draft(it["id"], title=title, body=body, force=force)
+        except RuntimeError as e:
+            print(str(e), file=sys.stderr)
+            return 2
         print(f"edited '{it['title']}'" + (" (title changed)" if title else ""))
         return 0
     if cmd in ("sync", "seed"):
