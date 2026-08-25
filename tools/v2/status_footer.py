@@ -203,6 +203,48 @@ def _fmt_tokens(n: int) -> str:
     return str(n)
 
 
+USAGE_STATE = REPO_ROOT / "memory" / "metrics" / "usage_state.json"
+USAGE_MAX_AGE_S = 30 * 60
+
+
+def _usage_status() -> str:
+    """Subscription quota (5h/weekly) from the usage_probe.py cache.
+
+    Mirrors tools/infra/statusline.js usageStatus(): NEVER probes — the footer
+    rides on every TG send and must stay instant. The supervisor refreshes the
+    cache each tick; if it's stale we show nothing rather than a wrong number
+    (a six-hour-old "40%" could be a current 100%). Puts the weekly number on
+    the operator's phone, not only the desktop statusline.
+    """
+    import time as _time
+    try:
+        s = json.loads(USAGE_STATE.read_text(encoding="utf-8"))
+        if _time.time() - (s.get("ts") or 0) > USAGE_MAX_AGE_S:
+            return ""
+        u5 = (s.get("five_h") or {}).get("utilization")
+        u7 = (s.get("seven_d") or {}).get("utilization")
+        if u5 is None and u7 is None:
+            return ""
+
+        def p(v):
+            if v is None:
+                return "?"
+            n = v * 100
+            return (f"{n:.0f}" if abs(n - round(n)) < 0.05 else f"{n:.1f}") + "%"
+
+        worst = max(u5 or 0, u7 or 0)
+        dot = "🔴" if worst >= 0.9 else "🟡" if worst >= 0.75 else "🟢"
+        resets = [r for r in ((s.get("five_h") or {}).get("reset"),
+                              (s.get("seven_d") or {}).get("reset")) if r]
+        hhmm = ""
+        if resets:
+            from datetime import datetime as _dt
+            hhmm = _dt.fromtimestamp(min(resets)).strftime("%H:%M")
+        return f"{dot}5h {p(u5)} · wk {p(u7)}" + (f" ↻{hhmm}" if hhmm else "")
+    except Exception:
+        return ""
+
+
 def _tg_status() -> str:
     pidf = HOME / ".claude" / "channels" / "telegram" / "bot.pid"
     if not pidf.exists():
@@ -235,6 +277,7 @@ def build_footer(short: bool = False, as_json: bool = False) -> str:
     used, mx, rem = _context_window()  # also stashes _LAST_MODEL
     pct_used = int((used / mx) * 100) if mx else 0
     model = _model_short()
+    usage = _usage_status()
 
     if as_json:
         return json.dumps({
@@ -246,6 +289,7 @@ def build_footer(short: bool = False, as_json: bool = False) -> str:
             "context_max": mx,
             "context_pct_used": pct_used,
             "model": model,
+            "usage": usage,
         })
 
     parts = [f"📍 {cwd} {git}".strip()]
@@ -255,6 +299,8 @@ def build_footer(short: bool = False, as_json: bool = False) -> str:
         if sess_short:
             parts.append(f"sess {sess_short} ({jcount}j)")
     parts.append(f"ctx {_fmt_tokens(used)}/{_fmt_tokens(mx)} ({pct_used}%)")
+    if usage:
+        parts.append(usage)
     return " · ".join(parts)
 
 
