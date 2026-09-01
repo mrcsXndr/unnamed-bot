@@ -53,21 +53,27 @@ case "$cmd" in
   read)
     shift; url="${1:-}"; shift || true
     take_auth "${1:-}" "${2:-}" && true; [ -n "$HEADERS" ] && shift 2 || true
+    # "$@" is what is left after path/url/auth: --session above all. Dropping it
+    # sent the work to the DEFAULT session, so the text came back from whatever
+    # page that session happened to be on, with no error to say so.
     if [ -n "$url" ]; then
-      if [ -n "$HEADERS" ]; then ab open "$url" --headers "$HEADERS" >/dev/null 2>&1; else ab open "$url" >/dev/null 2>&1; fi
-      ab wait 2500 >/dev/null 2>&1 || true
+      if [ -n "$HEADERS" ]; then ab open "$url" --headers "$HEADERS" "$@" >/dev/null 2>&1; else ab open "$url" "$@" >/dev/null 2>&1; fi
+      ab wait 2500 "$@" >/dev/null 2>&1 || true
     fi
-    ab get text body 2>/dev/null | PYTHONIOENCODING=utf-8 "$PY" "$REPO/tools/infra/sanitize.py" pipe
+    ab get text body "$@" 2>/dev/null | PYTHONIOENCODING=utf-8 "$PY" "$REPO/tools/infra/sanitize.py" pipe
     ;;
   shot)
     shift; path="${1:-}"; shift || true
     url="${1:-}"; [ -n "$url" ] && { case "$url" in --*) url="";; *) shift || true;; esac; }
     take_auth "${1:-}" "${2:-}" && true; [ -n "$HEADERS" ] && shift 2 || true
+    # Same as read: forward "$@" (notably --session) or the screenshot is taken
+    # of the default session's page. That silently produces an image of a page
+    # from an unrelated earlier session, which looks exactly like evidence.
     if [ -n "$url" ]; then
-      if [ -n "$HEADERS" ]; then ab open "$url" --headers "$HEADERS" >/dev/null 2>&1; else ab open "$url" >/dev/null 2>&1; fi
-      ab wait 3000 >/dev/null 2>&1 || true
+      if [ -n "$HEADERS" ]; then ab open "$url" --headers "$HEADERS" "$@" >/dev/null 2>&1; else ab open "$url" "$@" >/dev/null 2>&1; fi
+      ab wait 3000 "$@" >/dev/null 2>&1 || true
     fi
-    ab screenshot "$path"
+    ab screenshot "$path" "$@"
     ;;
   ""|-h|--help)
     sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
