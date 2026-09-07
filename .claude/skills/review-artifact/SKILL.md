@@ -135,8 +135,13 @@ judgement cannot reach it:
   messages (4 is a reasonable default) the send fails and prints what to do
   instead. Clear it when the operator replies.
 - An **`--alert` mode** in the same path: automated monitor output goes to a log
-  the agent reads and triages, never to a person. Keep an env override for the
-  rare thing a human must act on tonight.
+  the agent reads and triages, never to a person. **Gate it by severity.** The
+  first version of this routed everything to the log, and a CRITICAL "live
+  client site down" then sat unread for 40 minutes, because the only thing that
+  reads the log is the agent on a tick. Log every alert, push the criticals, and
+  exempt those from the backlog guard: swallowing an outage is a worse failure
+  than the repeated warning it replaced. Match the severity on a word boundary
+  and print what matched, so a substring cannot promote or demote an alert.
 
 Both belong at the lowest shared layer, because automated monitors are usually
 the bulk of the flood and they all send through it.
