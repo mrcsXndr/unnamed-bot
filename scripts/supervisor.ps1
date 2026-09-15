@@ -14,7 +14,13 @@
 #        bot proc alive + poller DEAD       -> RESTART (poller permanently 409'd)
 #        bot proc alive + poller ALIVE/UNK  -> healthy / transient, do nothing
 #   4. Backoff: at most MaxStartsPerWindow (re)starts per WindowMin (no
-#      crash-loop hammering).
+#      crash-loop hammering). Cold-start cap-check reads the START log with a
+#      typed TryParse init — an untyped `$null` ref fails to bind on newer
+#      PowerShell and silently returns 0 forever, defeating the cap.
+#   4b. Cold-start hygiene: a launched-but-not-yet-alive launcher (tracked via
+#      launcher_pid/launcher_started_at) blocks a second spawn while it's still
+#      within LauncherGraceMin, and gets its process tree killed once it's
+#      past that grace with no bot showing up (hung launcher).
 #   5. Keep .claude/.bot_state.json current with the live PIDs.
 #   6. Heartbeat (notify-only): commitments.py heartbeat TG-alerts due/overdue
 #      commitments (cooldown-deduped). ISOLATED try/catch — never gates the
@@ -36,7 +42,10 @@ param(
     [switch]$ProbeOnly,
     [switch]$DryRun,
     [int]$MaxStartsPerWindow = 3,
-    [int]$WindowMin = 30
+    [int]$WindowMin = 30,
+    # A cold-start launcher younger than this is "in progress" (no second
+    # spawn); older and still without claude => hung -> killed.
+    [int]$LauncherGraceMin = 4
 )
 
 $ErrorActionPreference = 'Continue'
@@ -100,6 +109,9 @@ function Write-BotState {
             claude_pid = $null; shell_pid = $null; session_id = $null
             started_at = $null; started_by = $null; updated_at = $null
             poller = $null; status = $null
+            # Cold-start launcher tracking: lets the next tick tell "still
+            # starting" from "hung" instead of spawning another.
+            launcher_pid = $null; launcher_started_at = $null
         }
         if ($cur) {
             foreach ($k in @($merged.Keys)) {
@@ -135,7 +147,12 @@ function Get-RecentStartCount {
         foreach ($line in Get-Content $logFile -ErrorAction SilentlyContinue) {
             if ($line -notmatch 'ACTION=START') { continue }
             $stampStr = ($line -split '\s\s', 2)[0]
-            $ts = $null
+            # Typed init is load-bearing: with `$ts = $null` PowerShell 7.6
+            # cannot bind the [ref] overload ("Cannot find an overload for
+            # TryParse and the argument count: 2"), the catch below swallows
+            # it, and this silently returns 0 forever — the start cap never
+            # fires no matter how many times the loop spins.
+            $ts = [datetime]::MinValue
             if ([datetime]::TryParse($stampStr, [ref]$ts)) {
                 if ($ts -ge $cutoff) { $n++ }
             }
@@ -177,6 +194,12 @@ function Start-BotCold {
         New-Item -ItemType File -Path (Join-Path $repo '.claude\.bot_fresh_restart') -Force | Out-Null
         Write-SupLog "dropped fresh-restart marker -> cold-start will be FRESH"
     } catch {}
+    # A WT-profile launch has no single child pid to poll (wt hands off to a
+    # separate process and its own launcher shell exits immediately), so only
+    # the plain-pwsh path can be tracked. That's fine: WT profiles are opened
+    # by the operator in the interactive session, where a hang is visible on
+    # screen; the tracked path matters for the case a hang would otherwise be
+    # silent (nobody watching the window).
     $wtProfile = Get-DotEnvValue 'BOT_WT_PROFILE'
     if ($wtProfile) {
         $wtCmd = Get-Command wt.exe -ErrorAction SilentlyContinue
@@ -187,11 +210,12 @@ function Start-BotCold {
             return "wt -p $wtProfile"
         }
     }
-    Start-Process -FilePath (Resolve-PwshExe) -ArgumentList @(
+    $p = Start-Process -FilePath (Resolve-PwshExe) -PassThru -ArgumentList @(
         '-NoExit','-NoProfile','-ExecutionPolicy','Bypass',
         '-File', $launcher, '-Continue', '-StartedBy', 'supervisor-cold'
     )
-    return "pwsh -NoExit -File launch.ps1 -Continue"
+    Write-BotState @{ launcher_pid = $p.Id; launcher_started_at = (Get-Date).ToString('o') }
+    return "pwsh -NoExit -File launch.ps1 -Continue (launcher pid $($p.Id))"
 }
 
 function Invoke-CommitmentsHeartbeat {
@@ -401,6 +425,38 @@ try {
         # though the 409 probe looks healthy; a restart reclaims the slot (the
         # thief's plugin gives up after one 409). Same idle-gated restart path.
         $action = 'restart'
+    }
+
+    # --- cold-start hygiene: is a previous cold-start launcher still running? -
+    # Start-BotCold records the launcher pid + start time. Younger than
+    # LauncherGraceMin -> it's still inside its (now-bounded) pre-launch steps:
+    # do NOT spawn another. Older and still no bot -> hung: kill its tree,
+    # clear the record, fall through to the normal cap check below. Without
+    # this, any stall between the launcher starting and claude coming up (a
+    # bounded step still eating its full timeout, an OS hiccup, etc.) would
+    # spawn a fresh cold-start launcher on every tick on top of the stuck one.
+    if ($action -eq 'cold-start') {
+        $st = Read-BotState
+        $lpid = 0; $lageMin = 1e9
+        if ($st) {
+            if ($null -ne $st.launcher_pid) { try { $lpid = [int]$st.launcher_pid } catch {} }
+            $lstart = [datetime]::MinValue
+            if ($st.launcher_started_at -and [datetime]::TryParse("$($st.launcher_started_at)", [ref]$lstart)) {
+                $lageMin = ((Get-Date) - $lstart).TotalMinutes
+            }
+        }
+        if ($lpid -gt 0 -and (Test-ProcAlive $lpid @('pwsh','powershell'))) {
+            if ($lageMin -lt $LauncherGraceMin) {
+                Write-SupLog "cold-start in progress (launcher pid $lpid, age $([int]($lageMin * 60))s) - not spawning another"
+                exit 0
+            }
+            if ($DryRun) { Write-SupLog "DRYRUN would kill hung launcher pid $lpid (age $([int]$lageMin)m)"; exit 0 }
+            & taskkill /PID $lpid /T /F 2>$null | Out-Null
+            Write-SupLog "launcher HUNG after $([int]$lageMin)m (pid $lpid) -> killed tree (exit=$LASTEXITCODE)"
+            Write-BotState @{ launcher_pid = $null; launcher_started_at = $null }
+        } elseif (($lpid -gt 0 -or $lageMin -lt 1e9) -and -not $DryRun) {
+            Write-BotState @{ launcher_pid = $null; launcher_started_at = $null }   # dead/stale record
+        }
     }
 
     # --- heartbeat: due-commitments surfacing (isolated) ----------------------

@@ -119,14 +119,42 @@ if (-not $Force) {
 # copies (it re-imported a local config fix for days). The backup is a BACKUP,
 # not a source of truth: restore is manual/on-demand only (fresh-box DR or an
 # explicit "restore from backup"):  bash tools/infra/sync_settings.sh pull
+#
+# Pre-launch steps run with a HARD timeout and NEVER block the launch. An
+# unattended/headless launch (a supervisor cold-start before the operator's
+# credential vault is available, or one running at all under a non-interactive
+# token) can hang forever inside `git pull`: git-credential-manager has no
+# vault or UI to fall back to there. Bound each step and kill its process tree
+# on timeout; a failed/timed-out step just launches with what's on disk.
+function Invoke-LaunchStepBounded {
+    param([string]$Exe, [string[]]$Arguments, [int]$TimeoutSec, [string]$Label, [string]$Slug)
+    try {
+        $p = Start-Process -FilePath $Exe -ArgumentList $Arguments -WorkingDirectory $repo -PassThru -NoNewWindow `
+                -RedirectStandardOutput "$env:TEMP\bot_launch_$Slug.out" -RedirectStandardError "$env:TEMP\bot_launch_$Slug.err"
+        if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+            & taskkill /PID $p.Id /T /F 2>$null | Out-Null
+            Write-Host "  $Label timed out after ${TimeoutSec}s -> killed its process tree; launching anyway." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "  $Label failed (non-fatal): $($_.Exception.Message)" -ForegroundColor DarkGray
+    }
+}
+# No credential prompts of any kind: git's own terminal prompt, GCM's UI, and
+# any askpass helper are all disabled for the children below (restored after).
+$prevGitPrompt = $env:GIT_TERMINAL_PROMPT; $prevGcm = $env:GCM_INTERACTIVE
+$env:GIT_TERMINAL_PROMPT = '0'; $env:GCM_INTERACTIVE = 'never'
+
 $gitBash = 'C:\Program Files\Git\bin\bash.exe'
 if ((Test-Feature 'FEATURE_SECRETS_BACKUP') -and (Test-Path "$repo\tools\infra\sync_settings.sh") -and (Test-Path $gitBash)) {
     Write-Host "Backing up settings to backup folder (push-only)..." -ForegroundColor DarkGray
-    & $gitBash "$repo\tools\infra\sync_settings.sh" push 2>$null
+    Invoke-LaunchStepBounded -Exe $gitBash -Arguments @("$repo\tools\infra\sync_settings.sh", 'push') -TimeoutSec 30 -Label 'settings backup push' -Slug 'push'
 }
 if (Test-Feature 'FEATURE_MEMORY_SYNC') {
-    git pull --rebase --autostash 2>$null | Out-Null
+    Invoke-LaunchStepBounded -Exe 'git' -Arguments @('-c', 'credential.interactive=never', '-c', 'core.askPass=',
+        'pull', '--rebase', '--autostash') -TimeoutSec 45 -Label 'git pull' -Slug 'pull'
 }
+
+$env:GIT_TERMINAL_PROMPT = $prevGitPrompt; $env:GCM_INTERACTIVE = $prevGcm
 
 # --- daily Claude Code self-update check (native updater; never blocks) ------
 try {
