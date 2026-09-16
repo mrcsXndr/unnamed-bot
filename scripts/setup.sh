@@ -296,6 +296,48 @@ else
   note "skipped (no token)"
 fi
 
+# --- 5b. unattended-seat pre-answers ----------------------------------------------------
+# Claude Code shows a handful of one-time BLOCKING dialogs that nobody can
+# answer in a hidden, Telegram-driven session: the "safeguards flagged this
+# message - switch models automatically?" prompt (first refusal), the
+# bypass-permissions acknowledgement, the dangerous-mode prompt, the Claude-in-
+# Chrome offer (which opens the operator's real browser). Each persists as a
+# key in the seat's settings.json / .claude.json, so answer them here, once,
+# for the seat this bot runs on (CLAUDE_CONFIG_DIR when set, else ~/.claude).
+# Idempotent merge: existing keys are overwritten, everything else is kept.
+say ""
+say "[5b/8] Unattended-seat pre-answers (blocking first-run dialogs)"
+SEAT_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+note "seat: $SEAT_DIR"
+merge_json_keys() {
+  # merge_json_keys <file> <json-object-literal>; one level of nested merge (env)
+  local file="$1" patch="$2"
+  if [ "$DRY_RUN" = "1" ]; then note "(dry-run) would merge $patch into $file"; return 0; fi
+  [ -n "$PYBIN" ] || { note "SKIPPED $file (python needed for the JSON merge)"; return 0; }
+  mkdir -p "$(dirname "$file")" 2>/dev/null || true
+  "$PYBIN" - "$file" "$patch" <<'PYEOF' || note "SKIPPED $file (merge failed)"
+import json, sys, os
+path, patch = sys.argv[1], json.loads(sys.argv[2])
+obj = {}
+if os.path.exists(path):
+    with open(path, encoding="utf-8") as f:
+        obj = json.load(f)
+for k, v in patch.items():
+    if isinstance(v, dict) and isinstance(obj.get(k), dict):
+        obj[k].update(v)
+    else:
+        obj[k] = v
+with open(path, "w", encoding="utf-8", newline="\n") as f:
+    json.dump(obj, f, indent=2, ensure_ascii=False)
+    f.write("\n")
+print("  set " + ", ".join(patch) + " in " + path)
+PYEOF
+}
+merge_json_keys "$SEAT_DIR/settings.json" \
+  '{"switchModelsOnFlag": true, "skipDangerousModePermissionPrompt": true, "env": {"CLAUDE_CODE_ARTIFACT_AUTO_OPEN": "0"}}'
+merge_json_keys "$SEAT_DIR/.claude.json" \
+  '{"bypassPermissionsModeAccepted": true, "claudeInChromeDefaultEnabled": false, "hasCompletedClaudeInChromeOnboarding": true}'
+
 # --- 6. opt-in features ---------------------------------------------------------------
 say ""
 say "[6/8] Optional automations (all OFF unless you opt in)"

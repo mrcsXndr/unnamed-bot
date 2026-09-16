@@ -117,6 +117,13 @@ to cron.
   tradeoff**: the bot can run any command on your machine. Run it on a machine
   you trust with the bot's job, keep the repo private, and read
   `.claude/rules/security.md`.
+- Setup also pre-answers a few one-time BLOCKING first-run dialogs nobody can
+  click through in a hidden session, by merging keys into the seat's
+  `settings.json` (`switchModelsOnFlag`, `skipDangerousModePermissionPrompt`,
+  `env.CLAUDE_CODE_ARTIFACT_AUTO_OPEN=0`) and `.claude.json`
+  (`bypassPermissionsModeAccepted`, `claudeInChromeDefaultEnabled: false`,
+  `hasCompletedClaudeInChromeOnboarding`). The merge is idempotent and keeps
+  every other key already in those files.
 - All external content (web pages, emails) is sanitized against prompt
   injection before the model reasons over it (`tools/infra/sanitize.py`), and
   memory channels are re-sanitized before injection at session start.

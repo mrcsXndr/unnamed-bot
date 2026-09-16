@@ -282,6 +282,57 @@ if ($TgToken) {
     Note 'skipped (no token)'
 }
 
+# --- 5b. unattended-seat pre-answers ----------------------------------------------------
+# Claude Code shows a handful of one-time BLOCKING dialogs that nobody can
+# answer in a hidden, Telegram-driven session: the "safeguards flagged this
+# message - switch models automatically?" prompt (first refusal), the
+# bypass-permissions acknowledgement, the dangerous-mode prompt, the Claude-in-
+# Chrome offer (which opens the operator's real Chrome). Each persists as a
+# key in the seat's settings.json / .claude.json, so answer them here, once,
+# for the seat this bot runs on (CLAUDE_CONFIG_DIR when set, else ~\.claude).
+# Idempotent merge: existing keys are overwritten, everything else is kept.
+Say ''
+Say '[5b/8] Unattended-seat pre-answers (blocking first-run dialogs)'
+function Merge-JsonKeys {
+    param([string]$Path, [hashtable]$Keys)
+    if ($DryRun) { Note "(dry-run) would set $($Keys.Keys -join ', ') in $Path"; return }
+    $obj = $null
+    if (Test-Path $Path) {
+        try { $obj = Get-Content $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+        catch { Note "SKIPPED $Path (not valid JSON: $($_.Exception.Message))"; return }
+    }
+    if (-not $obj) { $obj = [pscustomobject]@{} }
+    foreach ($k in $Keys.Keys) {
+        $v = $Keys[$k]
+        if ($v -is [hashtable]) {
+            # one level of nesting (the env block): merge, do not replace
+            $cur = $obj.$k
+            if (-not $cur) { $cur = [pscustomobject]@{} }
+            foreach ($ik in $v.Keys) { $cur | Add-Member -NotePropertyName $ik -NotePropertyValue $v[$ik] -Force }
+            $v = $cur
+        }
+        $obj | Add-Member -NotePropertyName $k -NotePropertyValue $v -Force
+    }
+    $dir = Split-Path $Path -Parent
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    # -Depth 100: .claude.json nests deeply; the default depth (2) would silently
+    # flatten it. LF-only, no BOM, same as every other file this wizard writes.
+    [IO.File]::WriteAllText($Path, ((($obj | ConvertTo-Json -Depth 100) -replace "`r`n", "`n") + "`n"))
+    Note "set $($Keys.Keys -join ', ') in $Path"
+}
+$seatDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
+Note "seat: $seatDir"
+Merge-JsonKeys -Path (Join-Path $seatDir 'settings.json') -Keys @{
+    switchModelsOnFlag                = $true    # refusal -> switch model, do not block
+    skipDangerousModePermissionPrompt = $true    # --dangerously-skip-permissions confirm
+    env = @{ CLAUDE_CODE_ARTIFACT_AUTO_OPEN = '0' }   # never open a browser on the box
+}
+Merge-JsonKeys -Path (Join-Path $seatDir '.claude.json') -Keys @{
+    bypassPermissionsModeAccepted        = $true   # bypass-permissions acknowledgement
+    claudeInChromeDefaultEnabled         = $false  # no Claude-in-Chrome (opens real Chrome)
+    hasCompletedClaudeInChromeOnboarding = $true   # and no offer dialog for it
+}
+
 # --- 6. opt-in features ---------------------------------------------------------------
 Say ''
 Say '[6/8] Optional automations (all OFF unless you opt in)'
