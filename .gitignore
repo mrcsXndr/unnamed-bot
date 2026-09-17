@@ -50,5 +50,8 @@ memory/metrics/*.log
 # Runtime state (quota cache, limit windows) — this machine's numbers,
 # meaningless in a clone, so DATA-FREE covers these too.
 memory/metrics/*.json
+# The bot's own Telegram chat log (tools/tg/tg_log.py): other people's
+# messages and downloaded media paths — never leaves this box.
+memory/tg/
 !memory/sessions/README.md
 !memory/**/.gitkeep

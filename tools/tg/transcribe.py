@@ -1,104 +1,74 @@
 #!/usr/bin/env python3
 """
-transcribe.py — transcribe a voice/audio file via Groq Whisper.
+transcribe.py — transcribe a voice/audio file locally with faster-whisper.
 
-Built specifically to handle Telegram voice messages from the channel plugin
-which arrive as .oga files with audio/ogg mime — Groq's filename-based filetype
-check rejects .oga even though the content is identical to .ogg, so we always
-override the filename in the multipart form to .ogg.
-
-Also requires a browser-style User-Agent header — Cloudflare in front of
-Groq returns 403 (error code 1010) for plain Python urllib UAs.
+Telegram voice notes arrive as .oga (Opus in Ogg). faster-whisper decodes
+through its bundled PyAV, so no ffmpeg binary is required for them; if a
+decode does fail for lack of a codec, the message below says how to get one.
 
 Usage:
-    python tools/transcribe.py <path-to-audio-file>
+    python tools/tg/transcribe.py <path-to-audio-file> [--model small] [--language xx]
 
-Reads GROQ_API_KEY from the project .env. Prints the transcription to stdout.
-Exit non-zero on failure with a clear error.
+Prints the transcript to stdout (empty output = nothing recognisable, e.g.
+silence — that is a pass, not an error). Model weights are cached under
+~/.cache/huggingface on first use (~500MB for `small`).
+
+Exit codes:
+    0  transcribed (possibly empty)
+    1  bad path / decode failure
+    2  faster-whisper not installed (prints the pip line — never crashes the bot)
 """
 
-import json
+import argparse
 import os
 import sys
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-ENV_FILE = ROOT / ".env"
-GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-MODEL = "whisper-large-v3-turbo"  # faster, similar quality for short clips
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+# Windows without Developer Mode: the HF cache falls back to copies and warns
+# on every run. Harmless, and the warning would otherwise land in the bot's
+# stderr each voice note.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+AUDIO_EXTS = (".ogg", ".oga", ".opus", ".mp3", ".m4a", ".wav", ".flac", ".webm", ".mp4")
 
 
-def load_env_var(name: str) -> str:
-    if not ENV_FILE.exists():
-        sys.exit(f"error: {ENV_FILE} not found")
-    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        s = line.strip()
-        if not s or s.startswith("#") or "=" not in s:
-            continue
-        k, v = s.split("=", 1)
-        if k.strip() == name:
-            return v.strip()
-    sys.exit(f"error: {name} not in {ENV_FILE}")
+def main() -> int:
+    p = argparse.ArgumentParser(description="Local Whisper transcription (faster-whisper, CPU int8)")
+    p.add_argument("path")
+    p.add_argument("--model", default="small", help="whisper size: tiny/base/small/medium (default small)")
+    p.add_argument("--language", default=None, help="ISO code to skip auto-detect (e.g. en, sv)")
+    args = p.parse_args()
 
-
-def transcribe(path: Path, api_key: str) -> str:
+    path = Path(args.path)
     if not path.exists():
-        sys.exit(f"error: {path} does not exist")
+        print(f"error: {path} does not exist", file=sys.stderr)
+        return 1
 
-    data = path.read_bytes()
-    boundary = f"----PythonBoundary{int(time.time() * 1000)}"
-
-    # Telegram voice files arrive as .oga; Groq's filetype check rejects .oga
-    # even though the bytes are valid OGG. Override the filename in the form.
-    forced_filename = "voice.ogg"
-
-    body = (
-        f"--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="file"; filename="{forced_filename}"\r\n'
-        f"Content-Type: audio/ogg\r\n\r\n"
-    ).encode("utf-8")
-    body += data
-    body += (
-        f"\r\n--{boundary}\r\n"
-        f'Content-Disposition: form-data; name="model"\r\n\r\n'
-        f"{MODEL}\r\n"
-        f"--{boundary}--\r\n"
-    ).encode("utf-8")
-
-    req = urllib.request.Request(
-        GROQ_URL,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "User-Agent": USER_AGENT,
-        },
-    )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read())
-            return result.get("text", "").strip()
-    except urllib.error.HTTPError as e:
-        body_text = e.read().decode("utf-8", errors="replace")
-        sys.exit(f"error: HTTP {e.code} from Groq: {body_text[:500]}")
-    except Exception as e:
-        sys.exit(f"error: {type(e).__name__}: {e}")
+        from faster_whisper import WhisperModel
+    except ImportError:
+        print("faster-whisper is not installed. Install it with:\n"
+              "    pip install faster-whisper\n"
+              "then re-run this command.", file=sys.stderr)
+        return 2
 
+    try:
+        model = WhisperModel(args.model, device="cpu", compute_type="int8")
+        segments, _info = model.transcribe(str(path), language=args.language, vad_filter=True)
+        text = " ".join(s.text.strip() for s in segments).strip()
+    except Exception as exc:
+        msg = str(exc)
+        print(f"error: transcription failed: {type(exc).__name__}: {msg[:300]}", file=sys.stderr)
+        if path.suffix.lower() in AUDIO_EXTS and ("decod" in msg.lower() or "av" in msg.lower()):
+            print("If this is a codec/decode problem, install ffmpeg and convert first:\n"
+                  "    winget install --id Gyan.FFmpeg -e\n"
+                  f"    ffmpeg -i \"{path}\" -ar 16000 -ac 1 \"{path.with_suffix('.wav')}\"",
+                  file=sys.stderr)
+        return 1
 
-def main():
-    if len(sys.argv) != 2:
-        sys.exit(f"usage: {sys.argv[0]} <path-to-audio-file>")
-    path = Path(sys.argv[1])
-    api_key = load_env_var("GROQ_API_KEY")
-    text = transcribe(path, api_key)
-    if not text:
-        sys.exit("error: empty transcription")
     print(text)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -61,7 +61,7 @@ Everything lands in `.env` (gitignored). The feature flags are plain
 | Supervisor (Windows) | scheduled task via `scripts/register-supervisor.ps1` | exactly one healthy bot: cold-start at logon/after crash, heal dead TG poller, commitments heartbeat | off |
 | Resource monitors (Windows) | `FEATURE_MONITORS=1` (needs supervisor) | hourly janitor: kills orphaned automation browsers, alerts on low disk/RAM | off |
 | TG watchdog (Windows) | scheduled task via `scripts/register-tg-watchdog.ps1` | standalone poller auto-heal if you DON'T want the full supervisor | off |
-| Voice transcription | `GROQ_API_KEY` in `.env` | Telegram voice notes → text via Whisper | off |
+| Voice transcription | `pip install faster-whisper` | Telegram voice notes → text, locally on CPU (~500 MB model download on first use; no API key) | off |
 | Task board | `TASK_BOARD_SHEET_ID` in `.env` | `/tasks` TG command reads a Google Sheet | off |
 | Kanban board | `GH_PROJECT_OWNER` + `GH_PROJECT_NUMBER` in `.env`, then `gh_projects.py init` | `/board` TG command over a GitHub Project (v2) — drag-drop from a phone ([rules](../.claude/rules/task-board.md)) | off |
 | Slack / Cloudflare / GitLab / Resend | keys in `.env` | optional CLI helpers under `tools/infra/` | off |

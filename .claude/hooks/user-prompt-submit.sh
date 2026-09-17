@@ -69,6 +69,31 @@ fi
 # so Windows-path backslashes and other literals survive intact.
 PROMPT_REAL="$PROMPT"
 
+# --- TG INBOUND LOG + REPLY-PATH NUDGE ---
+# Telegram's Bot API keeps no history, so every inbound <channel> message is
+# appended to memory/tg/<chat_id>.jsonl (idempotent on chat+message id) BEFORE
+# any intercept, so slash commands are logged too. Fail-open: tg_log.py exits 0
+# on its own errors and this line never gates the prompt.
+#
+# The nudge (injected as additional context at the end) states the working
+# tg_send.py reply command per inbound message: once tg_send.py failed live,
+# the bot fell back to the plugin `reply` tool and kept using it after the fix
+# (footer-less replies that outlived the bug). In-session learning has to be
+# countered on every prompt, so the hook states the working path each time.
+REPLY_NUDGE=""
+case "$PROMPT_REAL" in
+  *'<channel source="telegram"'*)
+    printf '%s' "$PROMPT_REAL" | "$PY" "$REPO/tools/tg/tg_log.py" ingest >/dev/null 2>&1 || true
+    # Last tag in the prompt = the message being answered (a batched prompt
+    # can carry several).
+    TG_CHAT_ID=$(printf '%s' "$PROMPT_REAL" | grep -o 'chat_id="[^"]*"' | tail -1 | sed 's/chat_id="\(.*\)"/\1/')
+    TG_MSG_ID=$(printf '%s' "$PROMPT_REAL" | grep -o 'message_id="[0-9]*"' | tail -1 | sed 's/message_id="\(.*\)"/\1/')
+    if [ -n "$TG_CHAT_ID" ]; then
+      REPLY_NUDGE="Reply path: python tools/tg/tg_send.py --chat-id $TG_CHAT_ID --reply-to ${TG_MSG_ID:-<message_id>} \"<CommonMark text>\" (formatted + status footer; it is working). Use the plugin reply tool only for file attachments."
+    fi
+    ;;
+esac
+
 # --- TG SLASH-COMMAND INTERCEPT ---
 # If the prompt is a TG-style slash command, handle it directly and block the
 # main thread. tg_commands.py exit codes: 0=handled, 1=not-a-cmd,
@@ -116,7 +141,20 @@ $HEAD
 EOF
 )
   "$PY" "$REPO/tools/v2/journal.py" append "$SESSION_ID" observation "large-paste guarded: ~$EST_TOKENS tokens stashed to .claude/stash/$(basename "$STASH_FILE")" >/dev/null 2>&1 || true
+  # One JSON blob per hook run: the reply-path nudge rides inside this one.
+  if [ -n "$REPLY_NUDGE" ]; then
+    GUARD_MSG="$GUARD_MSG
+
+$REPLY_NUDGE"
+    REPLY_NUDGE=""
+  fi
   ESCAPED=$(printf '%s' "$GUARD_MSG" | "$PY" -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo '""')
+  printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' "$ESCAPED"
+fi
+
+# --- TG REPLY-PATH NUDGE (see the inbound-log block) ---
+if [ -n "$REPLY_NUDGE" ]; then
+  ESCAPED=$(printf '%s' "$REPLY_NUDGE" | "$PY" -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo '""')
   printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' "$ESCAPED"
 fi
 

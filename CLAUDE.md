@@ -115,6 +115,13 @@ sessions only for migrations, intentional resets, or harness debugging.
 - Inbound `/commands` (`/status`, `/journal`, `/timeline`, `/compact`,
   `/tasks`, `/board`, `/costs`, `/update`, `/help`) are intercepted by a hook and never
   reach you — see `.claude/rules/v2-architecture.md`.
+- **Chat history + media:** Telegram keeps no history, so every inbound
+  message and every `tg_send.py` reply is logged to `memory/tg/<chat_id>.jsonl`
+  (`tg_send.py` is the only logged outbound path). Recall/quote old messages
+  with `python tools/tg/tg_history.py tail|search|show|quote <chat_id> …`.
+  Voice notes → `python tools/tg/transcribe.py <path>`; images → `Read` the
+  `image_path`; other files → `download_attachment` then `Read`; then log the
+  media with `tg_log.py note`. Full table: `.claude/rules/telegram.md` → Media.
 - Keep replies mobile-concise.
 
 ## Detailed Rules

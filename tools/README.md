@@ -47,8 +47,14 @@ python tools/tg/tg_send_photo.py /path/img.png "caption"
 python tools/tg/tg_send_document.py /path/file.pdf "caption"
 python tools/tg/tg_send_video.py /path/clip.mp4 "caption"
 
-# Voice note → text (needs GROQ_API_KEY)
+# Voice note → text (local faster-whisper: pip install faster-whisper)
 python tools/tg/transcribe.py /path/note.oga
+
+# The bot's own chat log (memory/tg/<chat_id>.jsonl, fed by the hook + tg_send.py)
+python tools/tg/tg_history.py tail <chat_id> 20
+python tools/tg/tg_history.py search <chat_id> "invoice"
+python tools/tg/tg_history.py quote <chat_id> <message_id>
+python tools/tg/tg_log.py note <chat_id> <message_id> --path /path/note.oga --transcript-file /path/note.txt
 ```
 
 ## Browser (`tools/browser/ab.sh`)

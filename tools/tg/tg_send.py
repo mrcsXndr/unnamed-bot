@@ -269,6 +269,7 @@ def main() -> int:
         return 1
 
     env = load_env()
+    body_text = text  # what the bot said, before the footer — this is what gets logged
 
     # Append v2 status footer (default on; opt-out via flag, env var, or .env)
     status_pref = os.environ.get("BOT_TG_STATUS") or env.get("BOT_TG_STATUS") or "1"
@@ -344,6 +345,17 @@ def main() -> int:
             print(f"  send failed: {result}", file=sys.stderr)
             return 2
         sent_ids.append(result["result"]["message_id"])
+
+    # Outbound side of the bot's own chat log (memory/tg/<chat_id>.jsonl) —
+    # the plugin's `reply` tool cannot be hooked, so this is the logged path.
+    # Fail-open: a log problem must never turn a delivered message into exit 2.
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from tg_log import log_out
+        if sent_ids:
+            log_out(chat_id, sent_ids[0], body_text)
+    except Exception:
+        pass
 
     # Photos ride AFTER the text, threaded under the first sent message.
     for photo in args.photo:

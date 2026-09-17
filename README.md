@@ -108,7 +108,7 @@ docs/SETUP.md          ← setup guide, feature matrix, cross-platform notes
 | LLM session debrief on stop | `FEATURE_SESSION_DEBRIEF=1` |
 | Secrets backup to cloud/USB folder | `FEATURE_SECRETS_BACKUP=1` + `SYNC_DRIVE_PATH` |
 | Supervisor / watchdog / monitors (Windows) | `scripts/register-supervisor.ps1` (+ `FEATURE_MONITORS=1`) |
-| Voice-note transcription | `GROQ_API_KEY` |
+| Voice-note transcription (local) | `pip install faster-whisper` |
 | Task board `/tasks` command | `TASK_BOARD_SHEET_ID` |
 | GitHub Projects kanban `/board` | `GH_PROJECT_OWNER` + `GH_PROJECT_NUMBER` |
 

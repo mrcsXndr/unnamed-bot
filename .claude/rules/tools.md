@@ -15,7 +15,8 @@
 tools/
   v2/        journal, timeline, recall, commitments, cost meter, critic,
              tg_commands, tg_watchdog, update_restart, safe_write, ... (the v2 architecture)
-  tg/        tg_send.py + media senders + transcribe.py (Telegram outbound)
+  tg/        tg_send.py + media senders (outbound), tg_log.py + tg_history.py
+             (the bot's own chat log), transcribe.py (local faster-whisper)
   browser/   ab.sh (agent-browser wrapper)
   google/    google_workspace.py backend + calendar/gmail/gtasks/sheets/drive wrappers (OPTIONAL — FEATURE_GOOGLE)
   infra/     sanitize.py, statusline.js, memory-sync-hook.cjs, resource_monitor.ps1,
@@ -32,7 +33,8 @@ tools/
 | `tools/google/drive.sh` | Google Drive (search/recent/download/list) | google_workspace.py |
 | `tools/browser/ab.sh` | Browser automation (agent-browser, isolated Chrome) | agent-browser |
 | `tools/tg/tg_send.py` | Send Telegram messages (CommonMark→HTML + split + status footer) | Telegram Bot API |
-| `tools/tg/transcribe.py` | Voice-to-text (Groq Whisper) for Telegram voice notes | Groq API |
+| `tools/tg/transcribe.py` | Voice-to-text for Telegram voice notes (local, CPU; `pip install faster-whisper`) | faster-whisper |
+| `tools/tg/tg_history.py` | Recall the bot's own TG chat log (tail/search/show/quote) | `memory/tg/*.jsonl` via tg_log.py |
 | `tools/infra/sanitize.py` | Anti-prompt-injection sanitiser for all external content | standalone |
 | `tools/infra/slack.sh` | Slack (channels/dms/history/search/unread) | Slack API (xoxp token) |
 | `tools/infra/cloudflare_ops.py` | Cloudflare DNS/SSL/cache management | standalone |
