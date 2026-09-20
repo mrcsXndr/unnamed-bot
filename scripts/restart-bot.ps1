@@ -104,12 +104,35 @@ if ($OldShellPid -gt 0) {
 # the Claude Code "resume from summary" picker — that blocking picker only fires
 # on genuinely aged sessions (the cold-start-after-reboot case, handled by the
 # supervisor's cold-start path, which sets the fresh marker itself). Forcing FRESH
-# here would THROW AWAY the just-killed session's working context. So we DELETE any
-# stale fresh marker and let the relaunch --continue.
+# here would THROW AWAY the just-killed session's working context. So a STALE
+# fresh marker is deleted and the relaunch --continues.
+#
+# The ONE exception is a roll the bot declared itself: the documented session
+# roll is "touch .claude/.bot_fresh_restart, then restart", and the launcher
+# honours a marker younger than 300 s. An earlier version of this block deleted
+# EVERY marker, so that procedure silently came back as --continue (and a
+# settings.json model pin, which only applies at session start, never took).
+# A marker under 300 s old can only have been dropped seconds before invoking
+# the restart — the supervisor's own restart path never creates one — so
+# honouring it does not reopen the "killed a live session" failure. It is
+# re-touched here so the launcher's 300 s window counts from the launch, not
+# from the touch (the old session may take up to the kill timeout to exit,
+# then the launcher's bounded pre-steps run). Verify a roll by the NEW session
+# id in the next status footer, not by the log line alone.
 try {
     $freshMarker = Join-Path $repo '.claude\.bot_fresh_restart'
-    if (Test-Path $freshMarker) { Remove-Item $freshMarker -Force -ErrorAction SilentlyContinue }
-    Write-RestartLog "relaunch will --continue (no fresh marker; long-running context preserved)"
+    if (Test-Path $freshMarker) {
+        $markerAge = [int]((Get-Date) - (Get-Item $freshMarker).LastWriteTime).TotalSeconds
+        if ($markerAge -lt 300) {
+            (Get-Item $freshMarker).LastWriteTime = Get-Date
+            Write-RestartLog "fresh marker present (${markerAge}s old, operator-declared roll) -> launcher will start FRESH (no --continue)"
+        } else {
+            Remove-Item $freshMarker -Force -ErrorAction SilentlyContinue
+            Write-RestartLog "stale fresh marker (${markerAge}s) deleted -> relaunch will --continue"
+        }
+    } else {
+        Write-RestartLog "relaunch will --continue (no fresh marker; long-running context preserved)"
+    }
 } catch {
     Write-RestartLog "marker cleanup note: $($_.Exception.Message)"
 }

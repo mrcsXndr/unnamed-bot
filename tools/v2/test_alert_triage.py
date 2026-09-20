@@ -225,6 +225,38 @@ def test_day_cap_defers(paths, monkeypatch):
     assert s["launched"] and len(sp.calls) == 2
 
 
+def test_busy_session_waives_idle_gate_only_when_oldest_alert_is_stale(paths, monkeypatch):
+    monkeypatch.delenv("BOT_TRIAGE_MAX_WAIT_H", raising=False)   # default 6h
+    fresh = HEALTH_WARN.replace("2026-01-19T14:29:29", (NOW - timedelta(hours=1)).isoformat(timespec="seconds"))
+    stale = BOX_WARN.replace("2026-01-16T17:09:45", (NOW - timedelta(hours=7)).isoformat(timespec="seconds"))
+    sp = Spawn()
+    # oldest alert 1h < 6h: busy session wins, nothing written
+    write_log(paths, fresh)
+    s = at.scan(now=NOW, spawn=sp, session_busy=True)
+    assert s.get("deferred") == "session-busy" and not sp.calls and not paths["STATE_FILE"].exists()
+    # oldest alert 7h >= 6h: waived, launched, run told about the live session
+    write_log(paths, fresh, stale)
+    s = at.scan(now=NOW, spawn=sp, session_busy=True)
+    assert s["launched"] and s["waived"] and len(sp.calls) == 1
+    log = paths["TRIAGE_LOG"].read_text(encoding="utf-8")
+    assert "idle gate waived: oldest alert 7.0h >= 6h" in log
+    prompt = paths["PROMPT_FILE"].read_text(encoding="utf-8")
+    assert "live bot session" in prompt and "memory/metrics/" in prompt
+    # an idle session never carries the note
+    paths["LOCK_FILE"].unlink()
+    write_log(paths, fresh, stale, BACKUP_FAIL)
+    s = at.scan(now=NOW, spawn=sp, session_busy=False)
+    assert s["launched"] and not s["waived"]
+    assert "live bot session" not in paths["PROMPT_FILE"].read_text(encoding="utf-8")
+
+
+def test_alert_age_handles_local_and_utc_stamps():
+    assert at.alert_age("2026-01-20T05:00:00", NOW) == timedelta(hours=7)
+    utc = at.alert_age("2026-01-20T03:30:06.892Z", NOW)
+    assert timedelta(hours=1) < utc < timedelta(hours=24)   # tz-converted, not 0 and not garbage
+    assert at.alert_age("not a stamp", NOW) == timedelta(0)
+
+
 def test_seed_moves_cursor_to_eof(paths):
     write_log(paths, HEALTH_WARN, BACKUP_FAIL)
     at.seed(now=NOW)

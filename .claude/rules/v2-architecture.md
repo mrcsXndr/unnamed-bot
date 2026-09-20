@@ -144,12 +144,22 @@ make that cold FRESH ~lossless.
   triggers a detached restart. 3-heals-per-30-min backoff.
 - **Self-restart** (`scripts/restart-bot.ps1`, used by `/update` and the
   supervisor) — wait-for-old-PID-then-relaunch, so two instances never attach
-  the same conversation.
+  the same conversation. A deliberate FRESH roll is: touch
+  `.claude/.bot_fresh_restart`, then restart — the restart script honours a
+  marker younger than 300 s (and re-touches it), deletes a stale one.
+  **Verify it landed:** `memory/metrics/restart.log` must say `fresh marker
+  present … -> launcher will start FRESH`, and the next status footer must show
+  a NEW session id. A roll is not done until the id changed; an earlier
+  restart script deleted every marker and rolls silently came back as
+  `--continue`.
 - **Alert triage tick** (`tools/v2/alert_triage.py`, `Invoke-AlertTriage` in the
   supervisor) — monitors write `tg_send.py --alert` lines to
   `memory/metrics/alerts.log` instead of pushing to the operator's phone; this
   tick is what READS that log (a log nobody reads is worse than a push). Every
-  `BOT_TRIAGE_EVERY_MIN` (30), idle-gated: read from a byte cursor
+  `BOT_TRIAGE_EVERY_MIN` (30), idle-gated (`--session-busy`) but WAIVED once the
+  oldest alert has waited `BOT_TRIAGE_MAX_WAIT_H` (6) — a session busy for days
+  must not starve every alert; a waived run is told to commit nothing in this
+  repo beyond `memory/metrics/`. It reads from a byte cursor
   (`memory/metrics/alerts_triage.json`), drop noise (🗂️ digests, info-only
   health), fingerprint the actionable lines (FAIL / CRITICAL / 🚨 / exited N /
   `(warn)` / backup; footer, stamps, digits stripped; `BOT_TRIAGE_COOLDOWN_H` 24h

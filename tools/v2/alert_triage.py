@@ -83,7 +83,7 @@ PROMPT_TEMPLATE = """You are the bot's alert triage tick: headless, unattended, 
 Repo: {root}. {n} new alert(s) from memory/metrics/alerts.log, verbatim:
 
 {alerts}
-
+{live_note}
 For EACH alert:
 1. Root-cause it. Use the repos on this box and the logs the alert names. Read the code before concluding.
 2. FIX it only if the fix is confined to this box or a repo we own. Then commit + push, ending the commit message with:
@@ -97,6 +97,13 @@ For EACH alert:
 
 Set PYTHONIOENCODING=utf-8 on python invocations. Do not edit files with scripts; use the Edit tool.
 Your final answer must be exactly NO_REPLY - unless a human must act tonight, in which case it is a single line starting HUMAN:.
+"""
+
+# Appended when the idle gate was WAIVED: the live bot session is mid-work in
+# this repo, so this run must not commit here (one writer per git tree).
+LIVE_SESSION_NOTE = """
+IMPORTANT: the live bot session may be editing THIS repo ({root}) RIGHT NOW. In this repo commit nothing
+except appends under memory/metrics/ (the auto-commit hook sweeps them). Other repos are fine to commit + push.
 """
 
 
@@ -220,12 +227,25 @@ def _triage_log(now: datetime, *fields: str) -> None:
         fh.write(_now_iso(now) + "\t" + "\t".join(f.replace("\t", " ").replace("\n", " ") for f in fields) + "\n")
 
 
-def build_prompt(batch: list[tuple[str, Alert, int]]) -> str:
+def build_prompt(batch: list[tuple[str, Alert, int]], live_session: bool = False) -> str:
     blocks = []
     for i, (fp, alert, count) in enumerate(batch, 1):
         seen = f" (seen {count}x since last triage)" if count > 1 else ""
         blocks.append(f"[{i}] fp={fp[:80]}{seen}\n" + "\n".join(l[:LINE_MAX] for l in alert.raw))
-    return PROMPT_TEMPLATE.format(root=ROOT, n=len(batch), alerts="\n\n".join(blocks))
+    return PROMPT_TEMPLATE.format(root=ROOT, n=len(batch), alerts="\n\n".join(blocks),
+                                  live_note=LIVE_SESSION_NOTE.format(root=ROOT) if live_session else "")
+
+
+def alert_age(stamp: str, now: datetime) -> timedelta:
+    """Age of an alert from its stamp. tg_send.py writes local naive time;
+    external jobs write UTC with a Z. Unparseable -> 0 (never waives on garbage)."""
+    try:
+        dt = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if dt.tzinfo is not None:
+            dt = dt.astimezone().replace(tzinfo=None)
+        return max(now - dt, timedelta(0))
+    except ValueError:
+        return timedelta(0)
 
 
 # ---------------------------------------------------------------- scan
@@ -242,11 +262,12 @@ def seed(now: datetime | None = None) -> None:
 
 
 def scan(now: datetime | None = None, dry_run: bool = False, verbose: bool = False,
-         spawn=None) -> dict:
+         spawn=None, session_busy: bool = False) -> dict:
     now = now or datetime.now()
     spawn = spawn or _spawn_waiter
     cooldown = timedelta(hours=_env_num("BOT_TRIAGE_COOLDOWN_H", 24))
     max_per_day = int(_env_num("BOT_TRIAGE_MAX_PER_DAY", 6))
+    max_wait = timedelta(hours=_env_num("BOT_TRIAGE_MAX_WAIT_H", 6))
 
     st = _load_state()
     text, new_offset, size = _read_new(int(st.get("offset", 0)))
@@ -312,6 +333,28 @@ def scan(now: datetime | None = None, dry_run: bool = False, verbose: bool = Fal
 
     # Launch gates. When a gate holds, write NOTHING (cursor + counters stay), so
     # the same alerts are re-read and batched on a later tick instead of lost.
+    #
+    # Idle gate + staleness waiver. The supervisor passes --session-busy when
+    # the live session is mid-work (Test-SessionBusy). A session can be busy
+    # for DAYS at a stretch, so an alert that simply waits for idle can wait
+    # indefinitely — the exact failure this tick exists to end. Once the OLDEST
+    # alert in the batch has waited BOT_TRIAGE_MAX_WAIT_H, the gate is waived
+    # and the run is told the live session may be editing this repo.
+    waived = False
+    if session_busy:
+        oldest = max(alert_age(a.stamp, now) for _fp, a, _c in batch)
+        oldest_h = oldest.total_seconds() / 3600
+        if oldest >= max_wait:
+            waived = True
+            msg = f"idle gate waived: oldest alert {oldest_h:.1f}h >= {max_wait.total_seconds() / 3600:g}h"
+            print(f"scan: {msg}")
+            _triage_log(now, "WAIVER", msg)
+        else:
+            print(f"scan: {len(batch)} to triage but the session is busy (oldest alert "
+                  f"{oldest_h:.1f}h < BOT_TRIAGE_MAX_WAIT_H={max_wait.total_seconds() / 3600:g}h); deferring")
+            summary["deferred"] = "session-busy"
+            return summary
+    summary["waived"] = waived
     lock = _lock_in_flight(now)
     if lock:
         print(f"scan: {len(batch)} to triage but a run is in flight ({lock}); deferring")
@@ -327,7 +370,7 @@ def scan(now: datetime | None = None, dry_run: bool = False, verbose: bool = Fal
 
     overflow = batch[BATCH_MAX:]
     batch = batch[:BATCH_MAX]
-    prompt = build_prompt(batch)
+    prompt = build_prompt(batch, live_session=waived)
     PROMPT_FILE.parent.mkdir(parents=True, exist_ok=True)
     PROMPT_FILE.write_text(prompt, encoding="utf-8")
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -473,6 +516,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--dry-run", action="store_true", help="print the batch, write nothing")
     s.add_argument("-v", "--verbose", action="store_true", help="print every line's class + matched text")
     s.add_argument("--seed", action="store_true", help="move the cursor to EOF without triaging")
+    s.add_argument("--session-busy", action="store_true",
+                   help="the live session is mid-work: defer unless the oldest alert has waited "
+                        "BOT_TRIAGE_MAX_WAIT_H (6)")
     sub.add_parser("list", help="show cursor/fingerprint/lock state")
     r = sub.add_parser("run", help="(internal) the detached waiter spawned by scan")
     r.add_argument("--prompt-file", required=True)
@@ -489,7 +535,8 @@ def main(argv: list[str] | None = None) -> int:
         elif getattr(args, "seed", False):
             seed()
         else:
-            scan(dry_run=getattr(args, "dry_run", False), verbose=getattr(args, "verbose", False))
+            scan(dry_run=getattr(args, "dry_run", False), verbose=getattr(args, "verbose", False),
+                 session_busy=getattr(args, "session_busy", False))
     except Exception as e:  # fail-open: a broken tick must never break the supervisor
         print(f"alert_triage: {e!r}", file=sys.stderr)
     return 0

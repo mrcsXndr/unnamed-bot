@@ -342,9 +342,10 @@ function Invoke-AlertTriage {
     #
     # Gates, in order: at most every BOT_TRIAGE_EVERY_MIN (30) via a stamp in
     # the state file; idle-gated by Test-SessionBusy (the run commits in repos
-    # the live session may be editing — one writer per tree; and a headless
-    # claude must never run while the live session is mid-task); then the
-    # script's own lock / BOT_TRIAGE_MAX_PER_DAY (6). The scan itself is bounded
+    # the live session may be editing — one writer per tree), WAIVED by the
+    # script once the oldest alert has waited BOT_TRIAGE_MAX_WAIT_H (6) — the
+    # run is then told not to commit in this repo beyond memory/metrics/; then
+    # the script's own lock / BOT_TRIAGE_MAX_PER_DAY (6). The scan itself is bounded
     # here (120s); the LLM run is NOT held under this mutex — the detached
     # waiter (`alert_triage.py run`) owns the BOT_TRIAGE_TIMEOUT_MIN (25) hard
     # timeout and tree-kills an overrun, logging it to
@@ -362,9 +363,12 @@ function Invoke-AlertTriage {
                 if (((Get-Date) - $last).TotalMinutes -lt $every) { return }
             }
         }
-        if (Test-SessionBusy) { return }   # work in flight -> retry next tick
+        # The idle gate lives in the script: it knows the alerts' ages and waives
+        # the gate once the oldest has waited BOT_TRIAGE_MAX_WAIT_H (6), because a
+        # session busy for days would otherwise starve every alert.
         if (-not $AsDryRun) { Write-BotState @{ triage_last_scan = (Get-Date).ToString('o') } }
         $a = @($script, 'scan')
+        if (Test-SessionBusy) { $a += '--session-busy' }
         if ($AsDryRun) { $a += '--dry-run' }
         $env:PYTHONIOENCODING = 'utf-8'
         $rc = Invoke-Bounded -Exe $pyExe -Arguments $a -TimeoutSec 120 -Label 'alert_triage'
