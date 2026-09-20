@@ -23,6 +23,10 @@ __pycache__/
 .claude/.bot_update_stamp
 .claude/.tg_owner.lock
 .claude/.monitor_ticks.json
+# alerts.log triage tick runtime state (tools/v2/alert_triage.py)
+.claude/.triage.lock
+.claude/.triage_prompt.txt
+memory/metrics/triage_runs/
 .claude/stash/
 memory/index/
 memory/commitments.json

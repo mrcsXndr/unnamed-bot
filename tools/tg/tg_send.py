@@ -30,6 +30,7 @@ Exit codes:
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -261,6 +262,10 @@ def main() -> int:
     p.add_argument("--photo", action="append", default=[],
                    help="Attach an image (repeatable). Sent AFTER the text message, threaded "
                         "under it, so formatting + status footer are never bypassed.")
+    p.add_argument("--alert", action="store_true",
+                   help="This is an automated monitor alert. It goes to memory/metrics/alerts.log "
+                        "for the triage tick (tools/v2/alert_triage.py), NOT to the operator's "
+                        "phone. Set BOT_TG_ALERTS=1 to push them anyway.")
     args = p.parse_args()
 
     text = args.text if args.text is not None else sys.stdin.read()
@@ -288,6 +293,36 @@ def main() -> int:
                     text = text.rstrip() + "\n\n" + footer
         except Exception:
             pass
+
+    # Automated alerts do not go to a person. A monitor that reports the same
+    # condition on a timer produces a message per tick, none individually wrong,
+    # and together they bury the one message that does need a human. So an
+    # alert lands in a log that the triage tick reads and acts on
+    # (tools/v2/alert_triage.py); a decision that genuinely needs the operator
+    # belongs in a review page, not in a 3am push.
+    if args.alert:
+        # Log EVERY alert, including the ones that also get pushed, so the
+        # triage log is a complete record rather than only the quiet half.
+        try:
+            log = ROOT / "memory" / "metrics" / "alerts.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.datetime.now().isoformat(timespec="seconds")
+            one_line = " | ".join(l.strip() for l in text.strip().splitlines() if l.strip())
+            with log.open("a", encoding="utf-8") as fh:
+                fh.write(f"{stamp}\t{one_line[:600]}\n")
+        except Exception:
+            pass
+        # Severity gates the silence: quieting a repeated warning is the goal;
+        # swallowing "a live service is DOWN" is a worse failure than the noise.
+        # Word-boundary, and the matched text is printed rather than a count, so
+        # a substring cannot quietly promote or demote an alert.
+        crit = re.search(r"(?<![A-Za-z])CRITICAL(?![A-Za-z])", text, re.I)
+        push = crit is not None or (os.environ.get("BOT_TG_ALERTS") or env.get("BOT_TG_ALERTS") or "0") == "1"
+        if not push:
+            print("[alert] logged for triage, not sent", file=sys.stderr)
+            return 0
+        print(f"[alert] logged AND sending (matched {crit.group(0)!r})" if crit
+              else "[alert] logged AND sending (BOT_TG_ALERTS=1)", file=sys.stderr)
 
     # Global mute. A test that drives a code path with a real send in it
     # messages a real person, and that is not hypothetical: a usage-limit

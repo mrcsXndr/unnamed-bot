@@ -112,6 +112,8 @@ function Write-BotState {
             # Cold-start launcher tracking: lets the next tick tell "still
             # starting" from "hung" instead of spawning another.
             launcher_pid = $null; launcher_started_at = $null
+            # Last alerts.log triage scan (Invoke-AlertTriage rate limit).
+            triage_last_scan = $null
         }
         if ($cur) {
             foreach ($k in @($merged.Keys)) {
@@ -284,6 +286,91 @@ function Invoke-UsageProbe {
         if ($out) { Write-SupLog "usage_probe: $((@($out) | Select-Object -Last 1))" }
     } catch {
         Write-SupLog "usage_probe: swallowed exception (fail-open): $($_.Exception.Message)"
+    }
+}
+
+function Invoke-Bounded {
+    # Run an external step with a HARD timeout, killing the whole process tree
+    # if it overruns. Every step runs inside the single-instance mutex, so a
+    # step invoked with a bare `& $exe ...` that blocks forever would disable
+    # ALL liveness supervision — the opposite of the point. Set timeouts from
+    # measured run times, not intuition: a cap below a healthy run's duration
+    # silently ends that monitor. Returns the exit code, or $null if killed.
+    param(
+        [Parameter(Mandatory)][string]$Exe,
+        [string[]]$Arguments = @(),
+        [int]$TimeoutSec = 180,
+        [string]$Label = 'step'
+    )
+    # ProcessStartInfo.ArgumentList, NOT Start-Process -ArgumentList: the latter
+    # joins the array with spaces and does no quoting, so any argument containing
+    # a space silently becomes two arguments. ArgumentList quotes each element.
+    $p = $null
+    try {
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = $Exe
+        foreach ($a in $Arguments) { [void]$psi.ArgumentList.Add([string]$a) }
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        # Output is discarded rather than buffered: redirecting without draining
+        # the pipe would deadlock a chatty child on a full buffer.
+        $psi.RedirectStandardOutput = $false
+        $psi.RedirectStandardError = $false
+        $p = [System.Diagnostics.Process]::Start($psi)
+        if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+            try { $p.Kill($true) } catch { }   # $true = kill the child tree too
+            Write-SupLog "$Label`: KILLED after ${TimeoutSec}s (was holding the tick)"
+            return $null
+        }
+        return $p.ExitCode
+    } catch {
+        Write-SupLog "$Label`: launch failed (fail-open): $($_.Exception.Message)"
+        return $null
+    } finally {
+        if ($p) { $p.Dispose() }
+    }
+}
+
+function Invoke-AlertTriage {
+    # The autonomous tick that READS memory/metrics/alerts.log. Monitors write
+    # there (tg_send.py --alert) instead of pushing to the operator's phone, and
+    # a log nobody reads is worse than a push. alert_triage.py scan classifies
+    # the new lines, fingerprints the actionable ones (24h cooldown per
+    # fingerprint) and, when there is a batch, spawns ONE detached headless
+    # claude run that fixes what is confined to this box / a repo we own, cards
+    # the rest on the task board, and answers NO_REPLY.
+    #
+    # Gates, in order: at most every BOT_TRIAGE_EVERY_MIN (30) via a stamp in
+    # the state file; idle-gated by Test-SessionBusy (the run commits in repos
+    # the live session may be editing — one writer per tree; and a headless
+    # claude must never run while the live session is mid-task); then the
+    # script's own lock / BOT_TRIAGE_MAX_PER_DAY (6). The scan itself is bounded
+    # here (120s); the LLM run is NOT held under this mutex — the detached
+    # waiter (`alert_triage.py run`) owns the BOT_TRIAGE_TIMEOUT_MIN (25) hard
+    # timeout and tree-kills an overrun, logging it to
+    # memory/metrics/alerts_triage.log. Holding the tick for 25 minutes would
+    # suspend liveness supervision. Fully ISOLATED + fail-open.
+    param([switch]$AsDryRun)
+    try {
+        $script = Join-Path $repo 'tools\v2\alert_triage.py'
+        if (-not (Test-Path $script)) { return }
+        $every = 30; try { if ($env:BOT_TRIAGE_EVERY_MIN) { $every = [double]$env:BOT_TRIAGE_EVERY_MIN } } catch {}
+        $st = Read-BotState
+        if ($st -and ($st.PSObject.Properties.Name -contains 'triage_last_scan') -and $st.triage_last_scan) {
+            $last = [datetime]::MinValue
+            if ([datetime]::TryParse("$($st.triage_last_scan)", [ref]$last)) {
+                if (((Get-Date) - $last).TotalMinutes -lt $every) { return }
+            }
+        }
+        if (Test-SessionBusy) { return }   # work in flight -> retry next tick
+        if (-not $AsDryRun) { Write-BotState @{ triage_last_scan = (Get-Date).ToString('o') } }
+        $a = @($script, 'scan')
+        if ($AsDryRun) { $a += '--dry-run' }
+        $env:PYTHONIOENCODING = 'utf-8'
+        $rc = Invoke-Bounded -Exe $pyExe -Arguments $a -TimeoutSec 120 -Label 'alert_triage'
+        Write-SupLog "alert_triage: scan rc=$(if ($null -eq $rc) { 'killed' } else { $rc })$(if ($AsDryRun) { ' (dry-run)' })"
+    } catch {
+        Write-SupLog "alert_triage: swallowed exception (fail-open): $($_.Exception.Message)"
     }
 }
 
@@ -468,6 +555,11 @@ try {
     # --- live quota probe (isolated; never gates liveness). Keeps the statusline
     # number fresh and warns BEFORE the wall. Self-throttled to one API call/5min.
     Invoke-UsageProbe -AsDryRun:$DryRun
+
+    # --- alerts.log triage tick (isolated; never gates liveness). Every
+    # BOT_TRIAGE_EVERY_MIN, idle-gated: classify new alerts, spawn one detached
+    # headless fix-or-card run when there is something new. NO_REPLY by default.
+    Invoke-AlertTriage -AsDryRun:$DryRun
 
     if ($action -eq 'none') {
         # Healthy: run the hourly-gated monitors here (never on the restart/

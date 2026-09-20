@@ -145,6 +145,24 @@ make that cold FRESH ~lossless.
 - **Self-restart** (`scripts/restart-bot.ps1`, used by `/update` and the
   supervisor) — wait-for-old-PID-then-relaunch, so two instances never attach
   the same conversation.
+- **Alert triage tick** (`tools/v2/alert_triage.py`, `Invoke-AlertTriage` in the
+  supervisor) — monitors write `tg_send.py --alert` lines to
+  `memory/metrics/alerts.log` instead of pushing to the operator's phone; this
+  tick is what READS that log (a log nobody reads is worse than a push). Every
+  `BOT_TRIAGE_EVERY_MIN` (30), idle-gated: read from a byte cursor
+  (`memory/metrics/alerts_triage.json`), drop noise (🗂️ digests, info-only
+  health), fingerprint the actionable lines (FAIL / CRITICAL / 🚨 / exited N /
+  `(warn)` / backup; footer, stamps, digits stripped; `BOT_TRIAGE_COOLDOWN_H` 24h
+  per fingerprint) and spawn ONE detached headless `claude --print`
+  (`BOT_TRIAGE_MODEL`, `--setting-sources user` so the TG plugin never loads and
+  the poller slot is never stolen, `BOT_TG_MUTE=1`) that fixes what is confined
+  to this box or a repo we own, cards the rest in Ready, and answers `NO_REPLY`.
+  Guards: `.claude/.triage.lock` (stale 30 min), `BOT_TRIAGE_MAX_PER_DAY` (6),
+  hard timeout `BOT_TRIAGE_TIMEOUT_MIN` (25) tree-killed by the detached waiter
+  (`alert_triage.py run`), never held under the supervisor mutex. History in
+  `memory/metrics/alerts_triage.log`; output in `memory/metrics/triage_runs/`.
+  `scan --dry-run -v` shows every line's class + matched text; `scan --seed`
+  starts the cursor at EOF on an old log.
 
 **TG single-poller invariant + enablement model.** The Telegram Bot API allows
 only ONE `getUpdates` long-poller per bot token; a second `claude` launched with
