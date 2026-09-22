@@ -14,6 +14,7 @@ param(
   [switch]$Clean,
   [switch]$Tg,                 # self-alert to Telegram on warn/critical (cooldown dedup)
   [int]$AbKillThreshold = 30,  # total agent-browser chrome cap: one live session = 11-12 procs, so warn only past ~2 sessions
+  [int]$TestMaxAgeMin = 60,    # age past which a `node --test` / `tsx --test` proc is treated as HUNG rather than slow
   [int]$TgCooldownH = 6        # don't re-alert the SAME issue set within this many hours
 )
 
@@ -77,6 +78,46 @@ foreach ($n in 'brush','colmap') {
 }
 $ff = Get-Process -Name ffmpeg -EA SilentlyContinue
 if (@($ff).Count -gt 0) { Add-Issue 'info' 'pipeline' "$(@($ff).Count) ffmpeg proc(s) — stray if no capture running" }
+
+# --- hung test-runner trees (node --test / tsx --test) ---
+# Two `tsx --test` trees were once found alive after four and five DAYS — 8 node
+# procs, 596 MB — and only because someone was looking for something else.
+#
+# THE OUTPUT LOOKED LIKE A SUCCESSFUL RUN, which is why they survived that long.
+# Node's test runner waits for the event loop to drain, so a suite that PASSES
+# while leaving a handle open (a server, an interval, a watcher) prints every
+# green checkmark and then sits there forever. The other shape — a test that
+# never settles — hangs because there is no default per-test timeout. Both are
+# real; the passing one is the dangerous one, because nothing about it looks
+# like a failure.
+#
+# Fix it in-band too where you own the test script (`--test-timeout` and
+# `--test-force-exit` on the runner). This block is the backstop for everything
+# else: a bare `npx tsx --test` typed by hand, another repo, a run started
+# before that fix existed.
+#
+# AGE IS THE SIGNAL, NOT EXISTENCE. A test run is supposed to be here. An hour
+# means it is not running, it is stuck. Matching '--test' in the command line
+# also keeps this off long-lived worker processes, which never carry that flag.
+$testProcs = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -EA SilentlyContinue |
+  Where-Object { $_.CommandLine -match '(^|\s)--test(\s|$|=)' })
+$hungTests = @($testProcs | Where-Object {
+  $started = $null
+  try { $started = $_.CreationDate } catch {}
+  $started -and ((Get-Date) - $started).TotalMinutes -ge $TestMaxAgeMin
+})
+if (@($hungTests).Count -gt 0) {
+  $tMem = [math]::Round((($hungTests | Measure-Object WorkingSetSize -Sum).Sum) / 1MB)
+  $oldest = [math]::Round((($hungTests | ForEach-Object { ((Get-Date) - $_.CreationDate).TotalHours } | Measure-Object -Maximum).Maximum), 1)
+  Add-Issue 'warn' 'tests' "$(@($hungTests).Count) hung test-runner proc(s) ($tMem MB, oldest ${oldest}h >= ${TestMaxAgeMin}m) — a passing suite that never exited looks exactly like this"
+  if ($Clean) {
+    # /T because the runner spawns a child per test file and those children do
+    # NOT carry --test in their own command lines, so killing only the matches
+    # would orphan the workers that hold most of the memory.
+    $hungTests | ForEach-Object { & taskkill /PID $_.ProcessId /T /F 2>&1 | Out-Null }
+    $actions += "reaped $(@($hungTests).Count) hung test-runner procs (${tMem}MB freed, oldest ${oldest}h)"
+  }
+}
 
 # --- duplicate bot sessions / pollers (single-poller invariant) ---
 # ASK THE QUESTION THE CHECK IS ACTUALLY FOR: does more than one process hold
