@@ -82,7 +82,7 @@ PROMPT_REAL="$PROMPT"
 # countered on every prompt, so the hook states the working path each time.
 REPLY_NUDGE=""
 case "$PROMPT_REAL" in
-  *'<channel source="telegram"'*)
+  *'<channel source="telegram"'*|*'<channel source="plugin:telegram:telegram"'*)
     printf '%s' "$PROMPT_REAL" | "$PY" "$REPO/tools/tg/tg_log.py" ingest >/dev/null 2>&1 || true
     # Last tag in the prompt = the message being answered (a batched prompt
     # can carry several).

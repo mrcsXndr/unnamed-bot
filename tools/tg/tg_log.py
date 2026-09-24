@@ -32,8 +32,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 LOG_DIR = ROOT / "memory" / "tg"
 
+# The plugin renamed its source from "telegram" to "plugin:telegram:telegram";
+# matching only the old name silently stopped inbound logging. Accept both.
 TAG_RE = re.compile(
-    r'<channel\s+source="telegram"([^>]*)>(.*?)</channel>', re.DOTALL
+    r'<channel\s+source="(?:plugin:telegram:)?telegram"([^>]*)>(.*?)</channel>', re.DOTALL
 )
 ATTR_RE = re.compile(r'([a-zA-Z_]+)="([^"]*)"')
 
