@@ -205,19 +205,42 @@ def _fmt_tokens(n: int) -> str:
 
 USAGE_STATE = REPO_ROOT / "memory" / "metrics" / "usage_state.json"
 USAGE_MAX_AGE_S = 30 * 60
+# Refresh the cache inline when it is older than this. The supervisor alone
+# refreshes it every ~6 min (3-min tick, 300 s probe throttle), so a burst of
+# replies all carried one number and read as frozen.
+USAGE_REFRESH_AFTER_S = 120
+
+
+def _refresh_usage_cache() -> None:
+    """One bounded probe (~9 Haiku tokens) that rewrites the cache. Fail-open."""
+    try:
+        subprocess.run(
+            [sys.executable or "python", str(REPO_ROOT / "tools" / "v2" / "usage_probe.py"),
+             "probe", "--min-interval", str(USAGE_REFRESH_AFTER_S)],
+            capture_output=True, timeout=4,
+        )
+    except Exception:
+        pass
 
 
 def _usage_status() -> str:
     """Subscription quota (5h/weekly) from the usage_probe.py cache.
 
-    Mirrors tools/infra/statusline.js usageStatus(): NEVER probes — the footer
-    rides on every TG send and must stay instant. The supervisor refreshes the
-    cache each tick; if it's stale we show nothing rather than a wrong number
-    (a six-hour-old "40%" could be a current 100%). Puts the weekly number on
-    the operator's phone, not only the desktop statusline.
+    Mirrors tools/infra/statusline.js usageStatus(). If the cache is older than
+    USAGE_REFRESH_AFTER_S it probes once first (4 s cap, then falls back to the
+    cache), so consecutive TG sends show current numbers. If it's stale past
+    USAGE_MAX_AGE_S we show nothing rather than a wrong number (a six-hour-old
+    "40%" could be a current 100%). Puts the weekly number on the operator's
+    phone, not only the desktop statusline.
     """
     import time as _time
     try:
+        try:
+            age = _time.time() - (json.loads(USAGE_STATE.read_text(encoding="utf-8")).get("ts") or 0)
+        except Exception:
+            age = None
+        if age is None or age > USAGE_REFRESH_AFTER_S:
+            _refresh_usage_cache()
         s = json.loads(USAGE_STATE.read_text(encoding="utf-8"))
         if _time.time() - (s.get("ts") or 0) > USAGE_MAX_AGE_S:
             return ""
